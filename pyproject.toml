@@ -1,0 +1,22 @@
+[project]
+name = "dpdfnet"
+version = "0.5.1"
+description = "CPU-only ONNX inference package for DPDFNet speech enhancement."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "einops>=0.8.1",
+    "huggingface-hub>=0.31.0",
+    "librosa>=0.11.0",
+    "numpy>=1.26.4",
+    "onnx>=1.17.0",
+    "onnxruntime>=1.20.0",
+    "pyqt5>=5.15",
+    "pyqtgraph>=0.13.3",
+    "scipy>=1.15.3",
+    "sounddevice>=0.4.6",
+    "soundfile>=0.13.1",
+    "tensorflow>=2.12",
+    "torch>=2.7.1",
+    "tqdm>=4.67.1",
+]
