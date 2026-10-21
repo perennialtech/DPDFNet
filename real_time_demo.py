@@ -1,135 +1,25 @@
+import argparse
+from importlib.metadata import version
 import queue
 import time
 from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort
 import pyqtgraph as pg
 import sounddevice as sd
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
-
+from dpdfnet import StreamEnhancer
+from dpdfnet.models import supported_models
 
 # =======================
 # CONFIG (GLOBAL STYLE)
 # =======================
 ONNX_DIR = Path("./model_zoo/onnx")
-MODEL_NAME = "dpdfnet2"  # dpdfnet2_8khz | dpdfnet8_8khz | baseline | dpdfnet2 | dpdfnet4 | dpdfnet8 | dpdfnet2_48khz_hr | dpdfnet8_48khz_hr
-ONNX_PATH = ONNX_DIR / f"{MODEL_NAME}.onnx"
+MODEL_NAME = "dpdfnet8_48khz_hr"
 
-PROVIDERS_PRIORITY = ["CPUExecutionProvider"]
 BUFFER_SECONDS = 5.0
 PLAYBACK_MIX = 0.0
 ONNX_MS_EMA_ALPHA = 0.02
-
-MODEL_AUDIO_PARAMS_BY_NAME = {
-    "dpdfnet2_8khz": (8000, 160, 80),
-    "dpdfnet8_8khz": (8000, 160, 80),
-    "baseline": (16000, 320, 160),
-    "dpdfnet2": (16000, 320, 160),
-    "dpdfnet4": (16000, 320, 160),
-    "dpdfnet8": (16000, 320, 160),
-    "dpdfnet2_48khz_hr": (48000, 960, 480),
-    "dpdfnet8_48khz_hr": (48000, 960, 480),
-}
-
-def infer_audio_params_from_model_name(model_name: str) -> tuple[int, int, int]:
-    try:
-        return MODEL_AUDIO_PARAMS_BY_NAME[model_name]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unsupported MODEL_NAME='{model_name}'. "
-            f"Expected one of: {sorted(MODEL_AUDIO_PARAMS_BY_NAME)}"
-        ) from exc
-
-
-def load_initial_state_from_metadata(session: ort.InferenceSession) -> np.ndarray:
-    meta = session.get_modelmeta().custom_metadata_map
-    try:
-        state_size = int(meta["state_size"])
-        erb_norm_state_size = int(meta["erb_norm_state_size"])
-        spec_norm_state_size = int(meta["spec_norm_state_size"])
-        erb_norm_init = np.array([float(x) for x in meta["erb_norm_init"].split(",")], dtype=np.float32)
-        spec_norm_init = np.array([float(x) for x in meta["spec_norm_init"].split(",")], dtype=np.float32)
-    except KeyError as exc:
-        raise ValueError(
-            f"ONNX model is missing required metadata key: {exc}. "
-            "Re-export the model to embed state initialisation metadata."
-        ) from exc
-
-    init_state = np.zeros(state_size, dtype=np.float32)
-    init_state[0:erb_norm_state_size] = erb_norm_init
-    init_state[erb_norm_state_size:erb_norm_state_size + spec_norm_state_size] = spec_norm_init
-    return np.ascontiguousarray(init_state)
-
-
-def validate_state_shape(session: ort.InferenceSession, state: np.ndarray) -> None:
-    expected = session.get_inputs()[1].shape
-    if len(expected) != state.ndim:
-        raise ValueError(f"Initial state rank mismatch: expected={expected}, actual={state.shape}")
-    for exp_dim, act_dim in zip(expected, state.shape):
-        if isinstance(exp_dim, int) and exp_dim != act_dim:
-            raise ValueError(f"Initial state shape mismatch: expected={expected}, actual={state.shape}")
-
-
-def vorbis_window(window_len: int) -> np.ndarray:
-    window_size_h = window_len / 2
-    indices = np.arange(window_len)
-    sin = np.sin(0.5 * np.pi * (indices + 0.5) / window_size_h)
-    window = np.sin(0.5 * np.pi * sin * sin)
-    return window.astype(np.float32)
-
-
-class STFTStreamingPreprocess:
-    def __init__(self, win_len: int, hop_size: int, window: np.ndarray):
-        self.win_len = int(win_len)
-        self.hop_size = int(hop_size)
-        self.window = np.asarray(window, dtype=np.float32)
-        self.buffer = np.zeros(self.win_len, dtype=np.float32)
-
-    def call(self, inputs: np.ndarray) -> np.ndarray:
-        x = np.asarray(inputs, dtype=np.float32)
-        if x.ndim != 1 or x.shape[0] != self.hop_size:
-            raise ValueError(f"Expected [{self.hop_size}] samples, got {x.shape}")
-
-        shifted = np.concatenate([self.buffer[self.hop_size:], x], axis=0)
-        self.buffer = shifted
-        frame = shifted * self.window
-        spec = np.fft.rfft(frame[None, :], axis=-1)
-        out = np.stack([spec.real, spec.imag], axis=-1)
-        return out[:, None, :, :].astype(np.float32, copy=False)
-
-    __call__ = call
-
-
-class ISTFTStreamingPostprocess:
-    def __init__(self, win_len: int, hop_size: int, window: np.ndarray):
-        self.win_len = int(win_len)
-        self.hop_size = int(hop_size)
-        self.window = np.asarray(window, dtype=np.float32)
-        self.ola_buffer = np.zeros(self.win_len, dtype=np.float32)
-
-    def call(self, inputs: np.ndarray) -> np.ndarray:
-        x = np.asarray(inputs, dtype=np.float32)
-        if x.ndim == 4:
-            x = x[0, 0]
-        elif x.ndim == 3:
-            x = x[0]
-        if x.ndim != 2 or x.shape[-1] != 2:
-            raise ValueError(f"Expected [F,2] style tensor, got {x.shape}")
-
-        spec = (x[..., 0] + 1j * x[..., 1]).astype(np.complex64, copy=False)[None, :]
-        frame = np.fft.irfft(spec, n=self.win_len, axis=-1)[0].astype(np.float32, copy=False)
-        frame = frame * self.window
-
-        shifted = np.concatenate(
-            [self.ola_buffer[self.hop_size:], np.zeros(self.hop_size, dtype=np.float32)], axis=0
-        )
-        new_buf = shifted + frame
-        out = new_buf[:self.hop_size].copy()
-        self.ola_buffer = new_buf
-        return out
-
-    __call__ = call
 
 
 def align_signal_length(x: np.ndarray, target_len: int) -> np.ndarray:
@@ -139,38 +29,30 @@ def align_signal_length(x: np.ndarray, target_len: int) -> np.ndarray:
     if x.shape[0] > target_len:
         return x[:target_len]
     out = np.zeros(target_len, dtype=np.float32)
-    out[:x.shape[0]] = x
+    out[: x.shape[0]] = x
     return out
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Real-time CPU speech enhancement")
+    parser.add_argument("--model", choices=supported_models(), default=MODEL_NAME)
+    parser.add_argument("--backend", choices=["onnx", "openvino"], default="onnx")
+    parser.add_argument("--onnx-dir", type=Path, default=ONNX_DIR)
+    args = parser.parse_args(argv)
     # Must be set before creating ImageItem/plots so spectrogram arrays
     # shaped [freq, time] map to y=freq and x=time.
     pg.setConfigOptions(antialias=True, imageAxisOrder="row-major")
 
-    onnx_path = ONNX_PATH.expanduser().resolve()
+    onnx_path = (args.onnx_dir / f"{args.model}.onnx").expanduser().resolve()
     if not onnx_path.is_file():
         raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
 
-    available = set(ort.get_available_providers())
-    providers = [p for p in PROVIDERS_PRIORITY if p in available]
-    if not providers:
-        raise RuntimeError(
-            f"No requested providers available. requested={PROVIDERS_PRIORITY}, available={sorted(available)}"
-        )
-
-    sess_opts = ort.SessionOptions()
-    sess_opts.intra_op_num_threads = 1
-    sess_opts.inter_op_num_threads = 1
-    session = ort.InferenceSession(str(onnx_path), sess_options=sess_opts, providers=providers)
-
-    init_state = load_initial_state_from_metadata(session)
-    validate_state_shape(session, init_state)
-
-    sample_rate, n_fft, hop_size = infer_audio_params_from_model_name(MODEL_NAME)
+    enhancer = StreamEnhancer(
+        model=args.model, onnx_path=onnx_path, backend=args.backend
+    )
+    sample_rate, hop_size = enhancer.sample_rate, enhancer.hop_size
     buffer_seconds = float(BUFFER_SECONDS)
     playback_mix = float(np.clip(PLAYBACK_MIX, 0.0, 1.0))
-    samples_per_buffer = int(buffer_seconds * sample_rate)
 
     spec_n_fft = 1024
     spec_max_freq = sample_rate / 2.0
@@ -186,9 +68,6 @@ def main() -> None:
     spec_td_noisy = np.zeros(spec_n_fft, dtype=np.float32)
     spec_td_enh = np.zeros(spec_n_fft, dtype=np.float32)
     spec_queue: queue.Queue[tuple[np.ndarray, np.ndarray]] = queue.Queue(maxsize=500)
-    audio_queue: queue.Queue[tuple[np.ndarray, np.ndarray]] = queue.Queue(maxsize=100)
-    noisy_buffer = np.zeros(samples_per_buffer, dtype=np.float32)
-    enhanced_buffer = np.zeros(samples_per_buffer, dtype=np.float32)
 
     agc_enabled = True
     agc_target_rms = 0.12
@@ -199,16 +78,7 @@ def main() -> None:
     agc_release_sec = 0.30
     agc_gain = 1.0
 
-    window = vorbis_window(n_fft)
-    stft = STFTStreamingPreprocess(n_fft, hop_size, window)
-    istft = ISTFTStreamingPostprocess(n_fft, hop_size, window)
-    runtime_state = init_state.copy()
     onnx_ms_ema = float("nan")
-
-    in_spec_name = session.get_inputs()[0].name
-    in_state_name = session.get_inputs()[1].name
-    out_spec_name = session.get_outputs()[0].name
-    out_state_name = session.get_outputs()[1].name
 
     def buffer_to_mag(buf: np.ndarray) -> np.ndarray:
         frame = buf.astype(np.float32, copy=True) * spec_window
@@ -220,7 +90,11 @@ def main() -> None:
         if (not agc_enabled) or x.size == 0:
             return np.clip(x, -1.0, 1.0)
         rms = float(np.sqrt(np.mean(x * x) + 1e-12))
-        desired_gain = float(np.clip(agc_target_rms / max(rms, agc_rms_floor), agc_min_gain, agc_max_gain))
+        desired_gain = float(
+            np.clip(
+                agc_target_rms / max(rms, agc_rms_floor), agc_min_gain, agc_max_gain
+            )
+        )
         attack_samples = max(1.0, agc_attack_sec * sample_rate)
         release_samples = max(1.0, agc_release_sec * sample_rate)
         attack_coeff = float(np.exp(-frames / attack_samples))
@@ -230,20 +104,17 @@ def main() -> None:
         return np.clip(x * agc_gain, -1.0, 1.0)
 
     def enhance_frame(noisy_frame: np.ndarray) -> np.ndarray:
-        nonlocal runtime_state, onnx_ms_ema
-        noisy_spec = np.ascontiguousarray(stft(noisy_frame), dtype=np.float32)
+        nonlocal onnx_ms_ema
         t0 = time.perf_counter()
-        spec_e, state_out = session.run(
-            [out_spec_name, out_state_name],
-            {in_spec_name: noisy_spec, in_state_name: runtime_state},
-        )
+        enhanced = enhancer.process(noisy_frame)
         frame_ms = (time.perf_counter() - t0) * 1000.0
         if np.isnan(onnx_ms_ema):
             onnx_ms_ema = frame_ms
         else:
-            onnx_ms_ema = (1.0 - ONNX_MS_EMA_ALPHA) * onnx_ms_ema + ONNX_MS_EMA_ALPHA * frame_ms
-        runtime_state = np.ascontiguousarray(state_out.astype(np.float32, copy=False))
-        return istft(spec_e).astype(np.float32, copy=False)
+            onnx_ms_ema = (
+                1.0 - ONNX_MS_EMA_ALPHA
+            ) * onnx_ms_ema + ONNX_MS_EMA_ALPHA * frame_ms
+        return enhanced
 
     def update_mix_label() -> None:
         if mix_value_label is not None:
@@ -276,7 +147,7 @@ def main() -> None:
         app = QtWidgets.QApplication([])
 
     win = QtWidgets.QWidget()
-    win.setWindowTitle("DPDFNet ONNX: Real-Time Enhancement Demo")
+    win.setWindowTitle(f"DPDFNet {args.model}: Real-Time CPU Enhancement")
     main_layout = QtWidgets.QVBoxLayout()
     win.setLayout(main_layout)
     glw = pg.GraphicsLayoutWidget()
@@ -355,7 +226,7 @@ def main() -> None:
 
     perf_layout = QtWidgets.QHBoxLayout()
     main_layout.addLayout(perf_layout)
-    perf_title = QtWidgets.QLabel("ONNX Inference (EMA)")
+    perf_title = QtWidgets.QLabel("Enhancement including STFT/ISTFT (EMA)")
     perf_value_label = QtWidgets.QLabel("-- ms/frame")
     perf_value_label.setAlignment(QtCore.Qt.AlignCenter)
     perf_value_label.setMinimumWidth(120)
@@ -364,7 +235,6 @@ def main() -> None:
     perf_layout.addWidget(perf_value_label)
 
     def audio_callback(indata, outdata, frames, time_info, status):
-        nonlocal spec_td_noisy, spec_td_enh, noisy_buffer, enhanced_buffer
         # Suppress sounddevice callback status spam (e.g., underflow/overflow).
 
         noisy = align_signal_length(indata[:, 0], frames)
@@ -372,34 +242,27 @@ def main() -> None:
         mixed = (1.0 - playback_mix) * noisy + playback_mix * enhanced
         outdata[:, 0] = apply_output_agc(mixed, frames)
 
-        noisy_buffer = np.roll(noisy_buffer, -frames)
-        noisy_buffer[-frames:] = noisy
-        enhanced_buffer = np.roll(enhanced_buffer, -frames)
-        enhanced_buffer[-frames:] = enhanced
-
-        l = min(len(noisy), spec_n_fft)
-        spec_td_noisy = np.roll(spec_td_noisy, -l)
-        spec_td_enh = np.roll(spec_td_enh, -l)
-        spec_td_noisy[-l:] = noisy[-l:]
-        spec_td_enh[-l:] = enhanced[-l:]
-
-        noisy_mag = buffer_to_mag(spec_td_noisy)
-        enh_mag = buffer_to_mag(spec_td_enh)
+        # Only copy the small audio blocks here; plotting FFTs belong on the UI
+        # thread so a slow display cannot delay playback.
         try:
-            spec_queue.put_nowait((noisy_mag, enh_mag))
-        except queue.Full:
-            pass
-        try:
-            audio_queue.put_nowait((noisy.copy(), enhanced.copy()))
+            spec_queue.put_nowait((noisy.copy(), enhanced.copy()))
         except queue.Full:
             pass
 
     def update_plot():
         nonlocal spec_noisy, spec_enh, db_spec_noisy, db_spec_enh, onnx_ms_ema
+        nonlocal spec_td_noisy, spec_td_enh
         updated = False
         try:
             while True:
-                noisy_mag, enh_mag = spec_queue.get_nowait()
+                noisy, enhanced = spec_queue.get_nowait()
+                length = min(len(noisy), spec_n_fft)
+                spec_td_noisy = np.roll(spec_td_noisy, -length)
+                spec_td_enh = np.roll(spec_td_enh, -length)
+                spec_td_noisy[-length:] = noisy[-length:]
+                spec_td_enh[-length:] = enhanced[-length:]
+                noisy_mag = buffer_to_mag(spec_td_noisy)
+                enh_mag = buffer_to_mag(spec_td_enh)
                 spec_noisy = np.roll(spec_noisy, -1, axis=1)
                 spec_enh = np.roll(spec_enh, -1, axis=1)
                 db_spec_noisy = np.roll(db_spec_noisy, -1, axis=1)
@@ -422,11 +285,10 @@ def main() -> None:
         else:
             perf_value_label.setText(f"{onnx_ms_ema:.3f} ms/frame")
 
-    print(f"[INFO] ONNX Runtime: {ort.__version__}")
+    runtime_package = "onnxruntime" if args.backend == "onnx" else "openvino"
+    print(f"[INFO] CPU backend: {args.backend} {version(runtime_package)}")
     print(f"[INFO] ONNX model: {onnx_path}")
-    print(f"[INFO] Initial state shape: {tuple(init_state.shape)}")
-    print(f"[INFO] Providers: {session.get_providers()}")
-    print(f"[INFO] Audio params: sr={sample_rate}, n_fft={n_fft}, hop={hop_size}")
+    print(f"[INFO] Audio params: sr={sample_rate}, hop={hop_size}")
     print("Streaming... speak into the mic. Close the window to stop.")
 
     timer = QtCore.QTimer()
