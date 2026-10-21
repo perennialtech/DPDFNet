@@ -109,66 +109,25 @@ dpdfnet.download("dpdfnet2_8khz")
 
 ### Streaming (Real-Time) API
 
-Install `sounddevice` (not included in `dpdfnet` dependencies):
-
-```bash
-pip install sounddevice
-```
-
-`StreamEnhancer` processes audio chunk-by-chunk, preserving RNN state across
-calls.  Any chunk size works; enhanced samples are returned as soon as enough
-data has accumulated for the first model frame (20 ms).
+For `dpdfnet8_48khz_hr`, use native 48 kHz audio and 480-sample (10 ms) chunks:
 
 ```python
-import numpy as np
-import sounddevice as sd
 import dpdfnet
 
-INPUT_SR   = 48000
-# Use one model hop (10 ms) as the block size so process() returns
-# exactly one hop's worth of enhanced audio on every callback.
-BLOCK_SIZE = int(INPUT_SR * 0.010)   # 480 samples at 48 kHz
-
-enhancer = dpdfnet.StreamEnhancer(model="dpdfnet2_48khz_hr")
-
-def callback(indata, outdata, frames, time, status):
-    mono_in = indata[:, 0] if indata.ndim > 1 else indata.ravel()
-    enhanced = enhancer.process(mono_in, sample_rate=INPUT_SR)
-    n = min(len(enhanced), frames)
-    outdata[:n, 0] = enhanced[:n]
-    if n < frames:
-        outdata[n:] = 0.0   # silence while the first window accumulates
-
-with sd.Stream(
-    samplerate=INPUT_SR,
-    blocksize=BLOCK_SIZE,
-    channels=1,
-    dtype="float32",
-    callback=callback,
-):
-    print("Enhancing microphone input - press Ctrl+C to stop")
-    try:
-        while True:
-            sd.sleep(100)
-    except KeyboardInterrupt:
-        pass
-
-# Optional: drain the final partial window at the end of a recording
-tail = enhancer.flush()
+# Construct outside the audio callback; construction includes warmup.
+enhancer = dpdfnet.StreamEnhancer(model="dpdfnet8_48khz_hr")
+# In your callback, with a mono float32 input block:
+# enhanced = enhancer.process(input_block, sample_rate=enhancer.sample_rate)
 ```
 
-> **Notes:**
->
-> **Latency** - the first enhanced output arrives after one full model window
->   (~20 ms) has been buffered.  All subsequent blocks are returned with ~10 ms
->   additional delay.\
-> **Sample rate** - `StreamEnhancer` resamples internally.  Pass your device's
->   native rate as `sample_rate`; the return value is at the same rate.\
-> **Block size** - using `BLOCK_SIZE = int(SR * 0.010)` (one model hop) gives
->   one enhanced block per callback.  Other sizes also work but may produce empty
->   returns while the buffer fills.\
-> **Multiple streams** - create a separate `StreamEnhancer` per stream.  Call
->   `enhancer.reset()` between independent audio segments to clear RNN state.
+The optional float32 OpenVINO CPU backend lowers processing latency on the
+tested Intel CPU, using more memory. Install `dpdfnet[openvino]` and pass
+`backend="openvino"` to select it. The portable default remains ONNX Runtime.
+Neither backend changes model weights, skips frames, or removes lookahead.
+
+See the [microphone example and streaming API guidance](package/README.md#real-time-microphone-enhancement)
+for callback buffering, sample rates, and reset/flush behavior, and the
+[CPU benchmark report](docs/cpu-streaming-performance.md) for measured tradeoffs.
 
 ## Run From Source
 
@@ -277,7 +236,12 @@ Enhanced files are written as:
 Run:
 
 ```bash
-python -m real_time_demo
+pip install -e ./package
+python -m real_time_demo --model dpdfnet8_48khz_hr
+
+# Optional faster CPU runtime:
+pip install -e './package[openvino]'
+python -m real_time_demo --model dpdfnet8_48khz_hr --backend openvino
 ```
 
 How it works:
@@ -287,7 +251,9 @@ How it works:
 - Allows you to control the noise‑reduction level during playback: `0` for the raw stream and `1` for the fully enhanced stream.
 - Enables the use of AGC during playback.
 
-To change model, edit `MODEL_NAME` near the top of `real_time_demo.py`.
+Select another model with `--model`; use `--help` for options. The display's
+timing includes STFT, inference, and ISTFT. Plot FFTs run on the UI thread,
+not in the audio callback.
 
 ## Troubleshooting / FAQ
 
@@ -315,6 +281,7 @@ To change model, edit `MODEL_NAME` near the top of `real_time_demo.py`.
 - Activate your virtual environment before running commands.
 
 #### `Q: CPU is too slow for my target`
+- Use the model's native sample rate, one-hop callbacks, and construct `StreamEnhancer` before starting the device. Try its optional `openvino` backend; see the [CPU benchmark report](docs/cpu-streaming-performance.md).
 - Try smaller models (`baseline`, `dpdfnet2`).
 - Benchmark ONNX runtime using `python -m onnx_model.infer_dpdfnet_onnx ...` and compare RTF.
 

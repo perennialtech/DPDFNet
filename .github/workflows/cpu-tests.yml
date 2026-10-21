@@ -1,0 +1,39 @@
+name: CPU streaming tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+        ort: ["onnxruntime==1.20.1", "onnxruntime"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv venv --python '${{ matrix.python }}'
+      - run: uv pip install -e './package[test,openvino]' '${{ matrix.ort }}'
+      - run: uv run --no-project python -m pytest package/tests -q
+
+  pretrained-models:
+    runs-on: ubuntu-latest
+    env:
+      DPDFNET_MODEL_DIR: ${{ runner.temp }}/dpdfnet-models
+      DPDFNET_TEST_MODEL_DIR: ${{ runner.temp }}/dpdfnet-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv
+      - run: uv pip install -e './package[test,openvino]'
+      - run: uv run --no-project dpdfnet download --quiet
+      - run: uv run --no-project python -m pytest package/tests -q
