@@ -282,6 +282,28 @@ def test_missing_model_message_does_not_reference_unsupported_cli_flags(tmp_path
 # StreamEnhancer tests
 # ---------------------------------------------------------------------------
 
+class _SessionFrameRunner:
+    """Reference runner for signal-pipeline tests, without ONNX allocation APIs."""
+
+    def __init__(self, runtime, win_len):
+        self.runtime = runtime
+        self.spec = np.zeros((1, 1, win_len // 2 + 1, 2), dtype=np.float32)
+        self.reset()
+
+    def reset(self):
+        self.state = self.runtime.init_state.copy()
+
+    def run(self):
+        output, self.state = self.runtime.session.run(
+            [self.runtime.out_spec_name, self.runtime.out_state_name],
+            {
+                self.runtime.in_spec_name: self.spec,
+                self.runtime.in_state_name: self.state,
+            },
+        )
+        return output
+
+
 def _make_fake_stream_enhancer(monkeypatch, win_len: int = 8, model_sr: int = 16000):
     """Return a StreamEnhancer backed by a fake zero-output ONNX session."""
     from dpdfnet import stream as stream_mod
@@ -332,6 +354,7 @@ def _make_fake_stream_enhancer(monkeypatch, win_len: int = 8, model_sr: int = 16
     monkeypatch.setattr(stream_mod, "resolve_model", lambda **_kw: _ResolvedModel())
     monkeypatch.setattr(stream_mod, "build_runtime_model", lambda _p: _FakeRuntime())
     monkeypatch.setattr(stream_mod, "infer_win_len", lambda _s, _sr: win_len)
+    monkeypatch.setattr(stream_mod, "OnnxFrameRunner", _SessionFrameRunner)
 
     from dpdfnet import StreamEnhancer
 
@@ -455,6 +478,7 @@ def _make_passthrough_stream_enhancer(monkeypatch, win_len: int = 320, model_sr:
     monkeypatch.setattr(stream_mod, "resolve_model", lambda **_kw: _Resolved())
     monkeypatch.setattr(stream_mod, "build_runtime_model", lambda _p: _Runtime())
     monkeypatch.setattr(stream_mod, "infer_win_len", lambda _s, _sr: win_len)
+    monkeypatch.setattr(stream_mod, "OnnxFrameRunner", _SessionFrameRunner)
 
     from dpdfnet import StreamEnhancer
 
@@ -565,6 +589,7 @@ def test_stream_and_offline_both_reconstruct_with_passthrough(monkeypatch) -> No
     monkeypatch.setattr(stream_mod, "resolve_model", lambda **_kw: _Resolved())
     monkeypatch.setattr(stream_mod, "build_runtime_model", lambda _p: _Runtime())
     monkeypatch.setattr(stream_mod, "infer_win_len", lambda _s, _sr: WIN)
+    monkeypatch.setattr(stream_mod, "OnnxFrameRunner", _SessionFrameRunner)
 
     np.random.seed(99)
     signal = np.random.randn(8000).astype(np.float32) * 0.5

@@ -1,6 +1,7 @@
 # dpdfnet
 
-CPU-only ONNX inference package for DPDFNet speech enhancement.
+CPU speech enhancement from pretrained ONNX models, with offline and stateful
+streaming APIs.
 
 ## Installation
 
@@ -129,6 +130,7 @@ Top-level exports:
 - `dpdfnet.enhance_file`
 - `dpdfnet.available_models`
 - `dpdfnet.download`
+- `dpdfnet.StreamEnhancer`
 
 In-memory enhancement:
 
@@ -177,21 +179,34 @@ Install `sounddevice` (not included in `dpdfnet` dependencies):
 pip install sounddevice
 ```
 
-`StreamEnhancer` processes audio chunk-by-chunk, preserving RNN state across
-calls.  Any chunk size works; enhanced samples are returned as soon as enough
-data has accumulated for the first model frame (20 ms).
+`StreamEnhancer` preserves recurrent state across calls and accepts arbitrary
+chunk sizes. For low CPU latency with `dpdfnet8_48khz_hr`, use native 48 kHz
+audio and 480-sample callbacks. The portable ONNX backend needs no extra runtime.
+
+The optional OpenVINO CPU backend reduces processing time on the tested Intel
+CPU, at the cost of more memory and longer construction. Install it with:
+
+```bash
+pip install 'dpdfnet[openvino]'
+```
+
+Select it with `backend="openvino"`; use `backend="onnx"` (the default) for ONNX
+Runtime. Both use float32, one CPU thread, the original model weights and one
+frame per inference. OpenVINO requires a platform supported by its
+[CPU runtime](https://docs.openvino.ai/2026/about-openvino/release-notes-openvino/system-requirements.html).
+It does not use a GPU or NPU and does not create a compiled-model disk cache.
 
 ```python
-import numpy as np
 import sounddevice as sd
 import dpdfnet
 
-INPUT_SR   = 48000
-# Use one model hop (10 ms) as the block size so process() returns
-# exactly one hop's worth of enhanced audio on every callback.
-BLOCK_SIZE = int(INPUT_SR * 0.010)   # 480 samples at 48 kHz
-
-enhancer = dpdfnet.StreamEnhancer(model="dpdfnet2_48khz_hr")
+# Construct and warm the model before starting the audio device.
+enhancer = dpdfnet.StreamEnhancer(
+    model="dpdfnet8_48khz_hr",
+    backend="onnx",  # Or "openvino" with the optional runtime installed.
+)
+INPUT_SR = enhancer.sample_rate  # 48000
+BLOCK_SIZE = enhancer.hop_size   # 480 samples, or 10 ms
 
 def callback(indata, outdata, frames, time, status):
     mono_in = indata[:, 0] if indata.ndim > 1 else indata.ravel()
@@ -219,18 +234,28 @@ with sd.Stream(
 tail = enhancer.flush()
 ```
 
-> **Notes:**
-> 
-> **Latency** - the first enhanced output arrives after one full model window
->   (~20 ms) has been buffered.  All subsequent blocks are returned with ~10 ms
->   additional delay.
-> **Sample rate** - `StreamEnhancer` resamples internally.  Pass your device's
->   native rate as `sample_rate`; the return value is at the same rate.
-> **Block size** - using `BLOCK_SIZE = int(SR * 0.010)` (one model hop) gives
->   one enhanced block per callback.  Other sizes also work but may produce empty
->   returns while the buffer fills.
-> **Multiple streams** - create a separate `StreamEnhancer` per stream.  Call
->   `enhancer.reset()` between independent audio segments to clear RNN state.
+The first callback returns no samples while the 20 ms window fills. Subsequent
+10 ms callbacks return one enhanced hop. Smaller chunks do not shorten the
+model hop; larger chunks delay output until the caller submits them. These
+buffering times are **not total microphone-to-speaker latency**: inference,
+the model's internal lookahead, and audio-device buffering add delay. Neither
+backend removes the model's lookahead.
+
+Use the model's native rate whenever the device supports it. Other rates are
+accepted and return audio at the input rate, but per-chunk resampling adds work
+and can introduce boundary artifacts; it is not a stateful resampling API.
+Keep the input rate constant until `reset()`.
+
+Create one enhancer per stream, and do not call its methods concurrently.
+Call `reset()` between independent recordings. Returned arrays belong to the
+caller and remain valid after later calls. `flush()` pads one final STFT frame
+and returns at most one model hop at the input rate; repeated calls return
+empty arrays. It does not drain every delayed model frame or guarantee a
+recording-length output. Use the offline API when exact file length is needed.
+
+See the [CPU streaming measurements and benchmark](https://github.com/perennialtech/DPDFNet/blob/main/docs/cpu-streaming-performance.md)
+for latency, memory, and numerical-parity results. Contributor test instructions
+are in [CONTRIBUTING.md](https://github.com/perennialtech/DPDFNet/blob/main/CONTRIBUTING.md).
 
 ## Links
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import librosa
 import numpy as np
 
 ATTN_LIMIT_NOISY_FRAME_OFFSET = 4
@@ -20,6 +19,8 @@ def to_mono(audio: np.ndarray) -> np.ndarray:
 def ensure_sample_rate(audio: np.ndarray, sample_rate: int, target_sample_rate: int) -> np.ndarray:
     if sample_rate == target_sample_rate:
         return np.asarray(audio, dtype=np.float32)
+    import librosa
+
     return librosa.resample(
         np.asarray(audio, dtype=np.float32),
         orig_sr=sample_rate,
@@ -102,6 +103,8 @@ def make_stft_config(win_len: int) -> StftConfig:
 
 
 def preprocess_waveform(waveform: np.ndarray, cfg: StftConfig) -> np.ndarray:
+    import librosa
+
     x = np.asarray(waveform, dtype=np.float32).reshape(-1)
     spec = librosa.stft(
         y=x,
@@ -118,6 +121,8 @@ def preprocess_waveform(waveform: np.ndarray, cfg: StftConfig) -> np.ndarray:
 
 
 def postprocess_spec(spec_e: np.ndarray, cfg: StftConfig) -> np.ndarray:
+    import librosa
+
     spec_c = np.asarray(spec_e[0], dtype=np.float32)
     spec = (spec_c[..., 0] + 1j * spec_c[..., 1]).T.astype(np.complex64, copy=False)
 
