@@ -57,7 +57,7 @@ foreach(size IN ITEMS 2 8)
   add_library(backend${size} OBJECT src/model_backend.c
     ${model_dir}/generated_model.c src/common/full_ops.c
     src/common/dpdf_dprnn.c src/common/avx2.c src/common/int8.c
-    src/common/extended_ops.c src/common/fp16.c
+    src/common/extended_ops.c
     src/common/qdot64_fixed_avx2.S src/common/qdot4pair_fixed_avx2.S
     ${model_dir}/qaffine64_fused_avx2.S)
   target_include_directories(backend${size} PRIVATE include src src/private)
@@ -85,7 +85,6 @@ foreach(size IN ITEMS 2 8)
 endforeach()
 set_source_files_properties(src/common/avx2.c src/common/int8.c PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
 set_source_files_properties(src/common/int8_vnni.c PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mavxvnni")
-set_source_files_properties(src/common/fp16.c PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-mf16c")
 add_library(dpdfnet src/runtime.c $<TARGET_OBJECTS:backend2> $<TARGET_OBJECTS:backend8>)
 add_library(DPDFNet::dpdfnet ALIAS dpdfnet)
 target_include_directories(dpdfnet PUBLIC
@@ -120,7 +119,7 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/models/dpdfnet2_48khz_hr/weights.f32"
     "${CMAKE_CURRENT_SOURCE_DIR}/models/dpdfnet8_48khz_hr/weights.f32")
   foreach(size IN ITEMS 2 8)
-    foreach(test IN ITEMS full_contract extended_contract layout_contract generated_gru_contract
+    foreach(test IN ITEMS full_contract layout_contract generated_gru_contract
         conv_helpers_contract int8_contract int8_dispatch_contract fused_contract pair_contract)
       set(target "model${size}_${test}")
       add_executable(${target} tests/${test}.c $<TARGET_OBJECTS:backend${size}>)
