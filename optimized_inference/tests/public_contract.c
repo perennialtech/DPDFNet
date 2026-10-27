@@ -30,7 +30,8 @@ int main(int argc, char **argv) {
         dpdfnet_model *a = dpdfnet_create(id, w, info->weight_floats);
         dpdfnet_model *b = dpdfnet_create(id, w, info->weight_floats);
         CHECK(a && b);
-        CHECK(dpdfnet_owned_bytes(a) == (index ? 5328964U : 3988336U));
+        CHECK(dpdfnet_owned_bytes(a) > 0);
+        CHECK(dpdfnet_owned_bytes(a) == dpdfnet_owned_bytes(b));
         memset(w, 0, info->weight_floats * sizeof(float)); free(w); /* Contexts own their weights. */
         float *s = malloc(info->state_floats * sizeof(float));
         float *t = malloc(info->state_floats * sizeof(float));

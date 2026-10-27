@@ -4,7 +4,7 @@
 #error DPDF_MODEL_SIZE must identify the compiled graph.
 #endif
 static void *create(const float *weights, size_t count) {
-    return dpdf_model_create_config(weights, count, DPDF_EXPERIMENTAL_INT8, 8, 7);
+    return dpdf_model_create(weights, count);
 }
 static int process(void *m, const float *x, const float *s, float *y, float *t) {
     return dpdf_model_process(m, x, s, y, t);

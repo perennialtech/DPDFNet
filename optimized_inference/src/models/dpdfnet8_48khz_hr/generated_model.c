@@ -11,9 +11,6 @@ struct dpdf_model {
     dpdf_block *blocks[16];
  dpdf_dense *dense[219];
  dpdf_convop *conv[21];
-    dpdf_affine_fn affine;
-    dpdf_axpy_fn axpy;
-    dpdf_transpose_fn transpose;
 };
 const char *dpdf_model_weights_sha256(void) { return "5a5bb67a8619090c54dc2793536fe813fe38123b236d445f3433aafe3075529d"; }
 size_t dpdf_model_weight_count(void) { return 3633068; }
@@ -31,14 +28,8 @@ void dpdf_model_destroy(dpdf_model *m) {
 for (int i=0;i<21;++i) dpdf_convop_destroy(m->conv[i]);
 free(m->weight_allocation); free(m->arena); free(m);
 }
-dpdf_model *dpdf_model_create_config(const float *w,size_t count,int tier,int precision,unsigned mask) {
-if ((precision!=0 && precision!=8 && precision!=16) || mask>15) return NULL;
-if ((precision==8 && !dpdf_has_avx2()) || (precision==16 && !dpdf_has_fp16())) return NULL;
-    if (!w || count!=dpdf_model_weight_count() || tier<0 || tier>DPDF_EXPERIMENTAL_INT8) return NULL;
-    if (tier==DPDF_AUTO) tier=dpdf_has_avx2()?DPDF_AVX2:DPDF_SCALAR;
-    if (tier==DPDF_AVX2 && !dpdf_has_avx2()) return NULL;
-    if (tier==DPDF_EXPERIMENTAL_FP16 && !dpdf_has_fp16()) return NULL;
-    if (tier==DPDF_EXPERIMENTAL_INT8 && !dpdf_has_avx2()) return NULL;
+dpdf_model *dpdf_model_create(const float *w,size_t count) {
+    if (!w || count!=dpdf_model_weight_count() || !dpdf_has_avx2()) return NULL;
     for (size_t i=0;i<count;++i) if (!isfinite(w[i])) return NULL;
     dpdf_model *m=calloc(1,sizeof(*m)); if (!m) return NULL;
     m->weight_allocation=malloc(7137*sizeof(float)+31); m->arena=malloc(dpdf_model_arena_bytes());
@@ -63,271 +54,265 @@ memcpy(m->weights+6632,w+232456,1*sizeof(float));
 memcpy(m->weights+6640,w+232464,1*sizeof(float));
 memcpy(m->weights+6648,w+232472,481*sizeof(float));
 memcpy(m->weights+7136,w+232960,1*sizeof(float));
-    m->affine=dpdf_affine_scalar; m->axpy=dpdf_axpy_scalar; m->transpose=dpdf_transpose_scalar;
-#ifdef DPDF_X86_DISPATCH
-    if (tier>=DPDF_AVX2) { m->affine=dpdf_affine_avx2; m->axpy=dpdf_axpy_avx2; m->transpose=dpdf_transpose_avx2; }
-#endif
-m->blocks[0]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+245256),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+245256),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+245256),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[0]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[1]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+332808),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+332808),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+332808),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[1]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[2]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+420360),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+420360),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+420360),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[2]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[3]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+507912),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+507912),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+507912),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[3]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[4]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+595464),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+595464),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+595464),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[4]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[5]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+683016),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+683016),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+683016),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[5]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[6]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+770568),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+770568),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+770568),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[6]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[7]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(40,(w+858120),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(40,(w+858120),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(40,(w+858120),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[7]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[8]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+953864),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+953864),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+953864),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[8]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[9]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1041416),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1041416),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1041416),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[9]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[10]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1128968),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1128968),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1128968),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[10]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[11]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1216520),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1216520),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1216520),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[11]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[12]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1304072),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1304072),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1304072),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[12]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[13]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1391624),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1391624),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1391624),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[13]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[14]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1479176),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1479176),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1479176),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[14]) { dpdf_model_destroy(m); return NULL; }
-m->blocks[15]=tier==DPDF_EXPERIMENTAL_INT8 ? dpdf_create_int8(48,(w+1566728),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : tier==DPDF_EXPERIMENTAL_FP16 ? dpdf_create_fp16(48,(w+1566728),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f) : dpdf_create(48,(w+1566728),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f,tier); if (!m->blocks[15]) { dpdf_model_destroy(m); return NULL; }
-m->dense[0]=dpdf_dense_create((w+232968),(w+231184),64,64,(mask&4)?precision:0,0); if (!m->dense[0]) { dpdf_model_destroy(m);return NULL; }
-m->dense[1]=dpdf_dense_create((w+237064),(w+231248),64,64,(mask&4)?precision:0,0); if (!m->dense[1]) { dpdf_model_destroy(m);return NULL; }
-m->dense[2]=dpdf_dense_create((w+241160),(w+231312),64,64,(mask&4)?precision:0,0); if (!m->dense[2]) { dpdf_model_destroy(m);return NULL; }
-m->dense[3]=dpdf_dense_create((w+945672),(w+231376),64,64,(mask&4)?precision:0,0); if (!m->dense[3]) { dpdf_model_destroy(m);return NULL; }
-m->dense[4]=dpdf_dense_create((w+949768),(w+231440),64,64,(mask&4)?precision:0,0); if (!m->dense[4]) { dpdf_model_destroy(m);return NULL; }
-m->dense[5]=dpdf_dense_create((w+42832),(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[5]) { dpdf_model_destroy(m);return NULL; }
-m->dense[6]=dpdf_dense_create((w+42832)+1536,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[6]) { dpdf_model_destroy(m);return NULL; }
-m->dense[7]=dpdf_dense_create((w+42832)+3072,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[7]) { dpdf_model_destroy(m);return NULL; }
-m->dense[8]=dpdf_dense_create((w+42832)+4608,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[8]) { dpdf_model_destroy(m);return NULL; }
-m->dense[9]=dpdf_dense_create((w+42832)+6144,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[9]) { dpdf_model_destroy(m);return NULL; }
-m->dense[10]=dpdf_dense_create((w+42832)+7680,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[10]) { dpdf_model_destroy(m);return NULL; }
-m->dense[11]=dpdf_dense_create((w+42832)+9216,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[11]) { dpdf_model_destroy(m);return NULL; }
-m->dense[12]=dpdf_dense_create((w+42832)+10752,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[12]) { dpdf_model_destroy(m);return NULL; }
-m->dense[13]=dpdf_dense_create((w+42832)+12288,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[13]) { dpdf_model_destroy(m);return NULL; }
-m->dense[14]=dpdf_dense_create((w+42832)+13824,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[14]) { dpdf_model_destroy(m);return NULL; }
-m->dense[15]=dpdf_dense_create((w+42832)+15360,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[15]) { dpdf_model_destroy(m);return NULL; }
-m->dense[16]=dpdf_dense_create((w+42832)+16896,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[16]) { dpdf_model_destroy(m);return NULL; }
-m->dense[17]=dpdf_dense_create((w+42832)+18432,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[17]) { dpdf_model_destroy(m);return NULL; }
-m->dense[18]=dpdf_dense_create((w+42832)+19968,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[18]) { dpdf_model_destroy(m);return NULL; }
-m->dense[19]=dpdf_dense_create((w+42832)+21504,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[19]) { dpdf_model_destroy(m);return NULL; }
-m->dense[20]=dpdf_dense_create((w+42832)+23040,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[20]) { dpdf_model_destroy(m);return NULL; }
-m->dense[21]=dpdf_dense_create((w+42832)+24576,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[21]) { dpdf_model_destroy(m);return NULL; }
-m->dense[22]=dpdf_dense_create((w+42832)+26112,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[22]) { dpdf_model_destroy(m);return NULL; }
-m->dense[23]=dpdf_dense_create((w+42832)+27648,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[23]) { dpdf_model_destroy(m);return NULL; }
-m->dense[24]=dpdf_dense_create((w+42832)+29184,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[24]) { dpdf_model_destroy(m);return NULL; }
-m->dense[25]=dpdf_dense_create((w+42832)+30720,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[25]) { dpdf_model_destroy(m);return NULL; }
-m->dense[26]=dpdf_dense_create((w+42832)+32256,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[26]) { dpdf_model_destroy(m);return NULL; }
-m->dense[27]=dpdf_dense_create((w+42832)+33792,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[27]) { dpdf_model_destroy(m);return NULL; }
-m->dense[28]=dpdf_dense_create((w+42832)+35328,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[28]) { dpdf_model_destroy(m);return NULL; }
-m->dense[29]=dpdf_dense_create((w+42832)+36864,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[29]) { dpdf_model_destroy(m);return NULL; }
-m->dense[30]=dpdf_dense_create((w+42832)+38400,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[30]) { dpdf_model_destroy(m);return NULL; }
-m->dense[31]=dpdf_dense_create((w+42832)+39936,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[31]) { dpdf_model_destroy(m);return NULL; }
-m->dense[32]=dpdf_dense_create((w+42832)+41472,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[32]) { dpdf_model_destroy(m);return NULL; }
-m->dense[33]=dpdf_dense_create((w+42832)+43008,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[33]) { dpdf_model_destroy(m);return NULL; }
-m->dense[34]=dpdf_dense_create((w+42832)+44544,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[34]) { dpdf_model_destroy(m);return NULL; }
-m->dense[35]=dpdf_dense_create((w+42832)+46080,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[35]) { dpdf_model_destroy(m);return NULL; }
-m->dense[36]=dpdf_dense_create((w+42832)+47616,(w+1654280),96,16,(mask&2)?precision:0,0); if (!m->dense[36]) { dpdf_model_destroy(m);return NULL; }
-m->dense[37]=dpdf_dense_create((w+1360),(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[37]) { dpdf_model_destroy(m);return NULL; }
-m->dense[38]=dpdf_dense_create((w+1360)+1280,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[38]) { dpdf_model_destroy(m);return NULL; }
-m->dense[39]=dpdf_dense_create((w+1360)+2560,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[39]) { dpdf_model_destroy(m);return NULL; }
-m->dense[40]=dpdf_dense_create((w+1360)+3840,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[40]) { dpdf_model_destroy(m);return NULL; }
-m->dense[41]=dpdf_dense_create((w+1360)+5120,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[41]) { dpdf_model_destroy(m);return NULL; }
-m->dense[42]=dpdf_dense_create((w+1360)+6400,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[42]) { dpdf_model_destroy(m);return NULL; }
-m->dense[43]=dpdf_dense_create((w+1360)+7680,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[43]) { dpdf_model_destroy(m);return NULL; }
-m->dense[44]=dpdf_dense_create((w+1360)+8960,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[44]) { dpdf_model_destroy(m);return NULL; }
-m->dense[45]=dpdf_dense_create((w+1360)+10240,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[45]) { dpdf_model_destroy(m);return NULL; }
-m->dense[46]=dpdf_dense_create((w+1360)+11520,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[46]) { dpdf_model_destroy(m);return NULL; }
-m->dense[47]=dpdf_dense_create((w+1360)+12800,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[47]) { dpdf_model_destroy(m);return NULL; }
-m->dense[48]=dpdf_dense_create((w+1360)+14080,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[48]) { dpdf_model_destroy(m);return NULL; }
-m->dense[49]=dpdf_dense_create((w+1360)+15360,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[49]) { dpdf_model_destroy(m);return NULL; }
-m->dense[50]=dpdf_dense_create((w+1360)+16640,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[50]) { dpdf_model_destroy(m);return NULL; }
-m->dense[51]=dpdf_dense_create((w+1360)+17920,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[51]) { dpdf_model_destroy(m);return NULL; }
-m->dense[52]=dpdf_dense_create((w+1360)+19200,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[52]) { dpdf_model_destroy(m);return NULL; }
-m->dense[53]=dpdf_dense_create((w+1360)+20480,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[53]) { dpdf_model_destroy(m);return NULL; }
-m->dense[54]=dpdf_dense_create((w+1360)+21760,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[54]) { dpdf_model_destroy(m);return NULL; }
-m->dense[55]=dpdf_dense_create((w+1360)+23040,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[55]) { dpdf_model_destroy(m);return NULL; }
-m->dense[56]=dpdf_dense_create((w+1360)+24320,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[56]) { dpdf_model_destroy(m);return NULL; }
-m->dense[57]=dpdf_dense_create((w+1360)+25600,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[57]) { dpdf_model_destroy(m);return NULL; }
-m->dense[58]=dpdf_dense_create((w+1360)+26880,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[58]) { dpdf_model_destroy(m);return NULL; }
-m->dense[59]=dpdf_dense_create((w+1360)+28160,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[59]) { dpdf_model_destroy(m);return NULL; }
-m->dense[60]=dpdf_dense_create((w+1360)+29440,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[60]) { dpdf_model_destroy(m);return NULL; }
-m->dense[61]=dpdf_dense_create((w+1360)+30720,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[61]) { dpdf_model_destroy(m);return NULL; }
-m->dense[62]=dpdf_dense_create((w+1360)+32000,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[62]) { dpdf_model_destroy(m);return NULL; }
-m->dense[63]=dpdf_dense_create((w+1360)+33280,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[63]) { dpdf_model_destroy(m);return NULL; }
-m->dense[64]=dpdf_dense_create((w+1360)+34560,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[64]) { dpdf_model_destroy(m);return NULL; }
-m->dense[65]=dpdf_dense_create((w+1360)+35840,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[65]) { dpdf_model_destroy(m);return NULL; }
-m->dense[66]=dpdf_dense_create((w+1360)+37120,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[66]) { dpdf_model_destroy(m);return NULL; }
-m->dense[67]=dpdf_dense_create((w+1360)+38400,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[67]) { dpdf_model_destroy(m);return NULL; }
-m->dense[68]=dpdf_dense_create((w+1360)+39680,(w+1654296),80,16,(mask&2)?precision:0,0); if (!m->dense[68]) { dpdf_model_destroy(m);return NULL; }
-m->dense[69]=dpdf_dense_create((w+92496),(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[69]) { dpdf_model_destroy(m);return NULL; }
-m->dense[70]=dpdf_dense_create((w+92496)+1024,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[70]) { dpdf_model_destroy(m);return NULL; }
-m->dense[71]=dpdf_dense_create((w+92496)+2048,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[71]) { dpdf_model_destroy(m);return NULL; }
-m->dense[72]=dpdf_dense_create((w+92496)+3072,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[72]) { dpdf_model_destroy(m);return NULL; }
-m->dense[73]=dpdf_dense_create((w+92496)+4096,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[73]) { dpdf_model_destroy(m);return NULL; }
-m->dense[74]=dpdf_dense_create((w+92496)+5120,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[74]) { dpdf_model_destroy(m);return NULL; }
-m->dense[75]=dpdf_dense_create((w+92496)+6144,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[75]) { dpdf_model_destroy(m);return NULL; }
-m->dense[76]=dpdf_dense_create((w+92496)+7168,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[76]) { dpdf_model_destroy(m);return NULL; }
-m->dense[77]=dpdf_dense_create((w+92496)+8192,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[77]) { dpdf_model_destroy(m);return NULL; }
-m->dense[78]=dpdf_dense_create((w+92496)+9216,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[78]) { dpdf_model_destroy(m);return NULL; }
-m->dense[79]=dpdf_dense_create((w+92496)+10240,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[79]) { dpdf_model_destroy(m);return NULL; }
-m->dense[80]=dpdf_dense_create((w+92496)+11264,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[80]) { dpdf_model_destroy(m);return NULL; }
-m->dense[81]=dpdf_dense_create((w+92496)+12288,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[81]) { dpdf_model_destroy(m);return NULL; }
-m->dense[82]=dpdf_dense_create((w+92496)+13312,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[82]) { dpdf_model_destroy(m);return NULL; }
-m->dense[83]=dpdf_dense_create((w+92496)+14336,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[83]) { dpdf_model_destroy(m);return NULL; }
-m->dense[84]=dpdf_dense_create((w+92496)+15360,(w+1654312),64,16,(mask&2)?precision:0,0); if (!m->dense[84]) { dpdf_model_destroy(m);return NULL; }
-m->dense[85]=dpdf_dense_create((w+1654328),(w+109136),256,768,(mask&1)?precision:0,64); if (!m->dense[85]) { dpdf_model_destroy(m);return NULL; }
-m->dense[86]=dpdf_dense_create((w+1850936),(w+109904),256,768,(mask&1)?precision:0,64); if (!m->dense[86]) { dpdf_model_destroy(m);return NULL; }
-m->dense[87]=dpdf_dense_create((w+110672),(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[87]) { dpdf_model_destroy(m);return NULL; }
-m->dense[88]=dpdf_dense_create((w+110672)+512,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[88]) { dpdf_model_destroy(m);return NULL; }
-m->dense[89]=dpdf_dense_create((w+110672)+1024,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[89]) { dpdf_model_destroy(m);return NULL; }
-m->dense[90]=dpdf_dense_create((w+110672)+1536,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[90]) { dpdf_model_destroy(m);return NULL; }
-m->dense[91]=dpdf_dense_create((w+110672)+2048,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[91]) { dpdf_model_destroy(m);return NULL; }
-m->dense[92]=dpdf_dense_create((w+110672)+2560,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[92]) { dpdf_model_destroy(m);return NULL; }
-m->dense[93]=dpdf_dense_create((w+110672)+3072,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[93]) { dpdf_model_destroy(m);return NULL; }
-m->dense[94]=dpdf_dense_create((w+110672)+3584,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[94]) { dpdf_model_destroy(m);return NULL; }
-m->dense[95]=dpdf_dense_create((w+110672)+4096,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[95]) { dpdf_model_destroy(m);return NULL; }
-m->dense[96]=dpdf_dense_create((w+110672)+4608,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[96]) { dpdf_model_destroy(m);return NULL; }
-m->dense[97]=dpdf_dense_create((w+110672)+5120,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[97]) { dpdf_model_destroy(m);return NULL; }
-m->dense[98]=dpdf_dense_create((w+110672)+5632,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[98]) { dpdf_model_destroy(m);return NULL; }
-m->dense[99]=dpdf_dense_create((w+110672)+6144,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[99]) { dpdf_model_destroy(m);return NULL; }
-m->dense[100]=dpdf_dense_create((w+110672)+6656,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[100]) { dpdf_model_destroy(m);return NULL; }
-m->dense[101]=dpdf_dense_create((w+110672)+7168,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[101]) { dpdf_model_destroy(m);return NULL; }
-m->dense[102]=dpdf_dense_create((w+110672)+7680,(w+2047544),16,32,(mask&2)?precision:0,0); if (!m->dense[102]) { dpdf_model_destroy(m);return NULL; }
-m->dense[103]=dpdf_dense_create((w+119376),(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[103]) { dpdf_model_destroy(m);return NULL; }
-m->dense[104]=dpdf_dense_create((w+119376)+512,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[104]) { dpdf_model_destroy(m);return NULL; }
-m->dense[105]=dpdf_dense_create((w+119376)+1024,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[105]) { dpdf_model_destroy(m);return NULL; }
-m->dense[106]=dpdf_dense_create((w+119376)+1536,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[106]) { dpdf_model_destroy(m);return NULL; }
-m->dense[107]=dpdf_dense_create((w+119376)+2048,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[107]) { dpdf_model_destroy(m);return NULL; }
-m->dense[108]=dpdf_dense_create((w+119376)+2560,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[108]) { dpdf_model_destroy(m);return NULL; }
-m->dense[109]=dpdf_dense_create((w+119376)+3072,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[109]) { dpdf_model_destroy(m);return NULL; }
-m->dense[110]=dpdf_dense_create((w+119376)+3584,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[110]) { dpdf_model_destroy(m);return NULL; }
-m->dense[111]=dpdf_dense_create((w+119376)+4096,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[111]) { dpdf_model_destroy(m);return NULL; }
-m->dense[112]=dpdf_dense_create((w+119376)+4608,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[112]) { dpdf_model_destroy(m);return NULL; }
-m->dense[113]=dpdf_dense_create((w+119376)+5120,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[113]) { dpdf_model_destroy(m);return NULL; }
-m->dense[114]=dpdf_dense_create((w+119376)+5632,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[114]) { dpdf_model_destroy(m);return NULL; }
-m->dense[115]=dpdf_dense_create((w+119376)+6144,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[115]) { dpdf_model_destroy(m);return NULL; }
-m->dense[116]=dpdf_dense_create((w+119376)+6656,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[116]) { dpdf_model_destroy(m);return NULL; }
-m->dense[117]=dpdf_dense_create((w+119376)+7168,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[117]) { dpdf_model_destroy(m);return NULL; }
-m->dense[118]=dpdf_dense_create((w+119376)+7680,(w+2047576),32,16,(mask&2)?precision:0,0); if (!m->dense[118]) { dpdf_model_destroy(m);return NULL; }
-m->dense[119]=dpdf_dense_create((w+2047592),(w+127824),256,768,(mask&1)?precision:0,64); if (!m->dense[119]) { dpdf_model_destroy(m);return NULL; }
-m->dense[120]=dpdf_dense_create((w+2244200),(w+128592),256,768,(mask&1)?precision:0,64); if (!m->dense[120]) { dpdf_model_destroy(m);return NULL; }
-m->dense[121]=dpdf_dense_create((w+2440808),(w+129360),256,768,(mask&1)?precision:0,64); if (!m->dense[121]) { dpdf_model_destroy(m);return NULL; }
-m->dense[122]=dpdf_dense_create((w+2637416),(w+130128),256,768,(mask&1)?precision:0,64); if (!m->dense[122]) { dpdf_model_destroy(m);return NULL; }
-m->dense[123]=dpdf_dense_create((w+130896),(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[123]) { dpdf_model_destroy(m);return NULL; }
-m->dense[124]=dpdf_dense_create((w+130896)+512,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[124]) { dpdf_model_destroy(m);return NULL; }
-m->dense[125]=dpdf_dense_create((w+130896)+1024,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[125]) { dpdf_model_destroy(m);return NULL; }
-m->dense[126]=dpdf_dense_create((w+130896)+1536,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[126]) { dpdf_model_destroy(m);return NULL; }
-m->dense[127]=dpdf_dense_create((w+130896)+2048,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[127]) { dpdf_model_destroy(m);return NULL; }
-m->dense[128]=dpdf_dense_create((w+130896)+2560,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[128]) { dpdf_model_destroy(m);return NULL; }
-m->dense[129]=dpdf_dense_create((w+130896)+3072,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[129]) { dpdf_model_destroy(m);return NULL; }
-m->dense[130]=dpdf_dense_create((w+130896)+3584,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[130]) { dpdf_model_destroy(m);return NULL; }
-m->dense[131]=dpdf_dense_create((w+130896)+4096,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[131]) { dpdf_model_destroy(m);return NULL; }
-m->dense[132]=dpdf_dense_create((w+130896)+4608,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[132]) { dpdf_model_destroy(m);return NULL; }
-m->dense[133]=dpdf_dense_create((w+130896)+5120,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[133]) { dpdf_model_destroy(m);return NULL; }
-m->dense[134]=dpdf_dense_create((w+130896)+5632,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[134]) { dpdf_model_destroy(m);return NULL; }
-m->dense[135]=dpdf_dense_create((w+130896)+6144,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[135]) { dpdf_model_destroy(m);return NULL; }
-m->dense[136]=dpdf_dense_create((w+130896)+6656,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[136]) { dpdf_model_destroy(m);return NULL; }
-m->dense[137]=dpdf_dense_create((w+130896)+7168,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[137]) { dpdf_model_destroy(m);return NULL; }
-m->dense[138]=dpdf_dense_create((w+130896)+7680,(w+2834024),16,32,(mask&2)?precision:0,0); if (!m->dense[138]) { dpdf_model_destroy(m);return NULL; }
-m->dense[139]=dpdf_dense_create((w+140944),(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[139]) { dpdf_model_destroy(m);return NULL; }
-m->dense[140]=dpdf_dense_create((w+140944)+1280,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[140]) { dpdf_model_destroy(m);return NULL; }
-m->dense[141]=dpdf_dense_create((w+140944)+2560,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[141]) { dpdf_model_destroy(m);return NULL; }
-m->dense[142]=dpdf_dense_create((w+140944)+3840,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[142]) { dpdf_model_destroy(m);return NULL; }
-m->dense[143]=dpdf_dense_create((w+140944)+5120,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[143]) { dpdf_model_destroy(m);return NULL; }
-m->dense[144]=dpdf_dense_create((w+140944)+6400,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[144]) { dpdf_model_destroy(m);return NULL; }
-m->dense[145]=dpdf_dense_create((w+140944)+7680,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[145]) { dpdf_model_destroy(m);return NULL; }
-m->dense[146]=dpdf_dense_create((w+140944)+8960,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[146]) { dpdf_model_destroy(m);return NULL; }
-m->dense[147]=dpdf_dense_create((w+140944)+10240,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[147]) { dpdf_model_destroy(m);return NULL; }
-m->dense[148]=dpdf_dense_create((w+140944)+11520,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[148]) { dpdf_model_destroy(m);return NULL; }
-m->dense[149]=dpdf_dense_create((w+140944)+12800,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[149]) { dpdf_model_destroy(m);return NULL; }
-m->dense[150]=dpdf_dense_create((w+140944)+14080,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[150]) { dpdf_model_destroy(m);return NULL; }
-m->dense[151]=dpdf_dense_create((w+140944)+15360,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[151]) { dpdf_model_destroy(m);return NULL; }
-m->dense[152]=dpdf_dense_create((w+140944)+16640,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[152]) { dpdf_model_destroy(m);return NULL; }
-m->dense[153]=dpdf_dense_create((w+140944)+17920,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[153]) { dpdf_model_destroy(m);return NULL; }
-m->dense[154]=dpdf_dense_create((w+140944)+19200,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[154]) { dpdf_model_destroy(m);return NULL; }
-m->dense[155]=dpdf_dense_create((w+140944)+20480,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[155]) { dpdf_model_destroy(m);return NULL; }
-m->dense[156]=dpdf_dense_create((w+140944)+21760,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[156]) { dpdf_model_destroy(m);return NULL; }
-m->dense[157]=dpdf_dense_create((w+140944)+23040,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[157]) { dpdf_model_destroy(m);return NULL; }
-m->dense[158]=dpdf_dense_create((w+140944)+24320,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[158]) { dpdf_model_destroy(m);return NULL; }
-m->dense[159]=dpdf_dense_create((w+140944)+25600,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[159]) { dpdf_model_destroy(m);return NULL; }
-m->dense[160]=dpdf_dense_create((w+140944)+26880,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[160]) { dpdf_model_destroy(m);return NULL; }
-m->dense[161]=dpdf_dense_create((w+140944)+28160,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[161]) { dpdf_model_destroy(m);return NULL; }
-m->dense[162]=dpdf_dense_create((w+140944)+29440,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[162]) { dpdf_model_destroy(m);return NULL; }
-m->dense[163]=dpdf_dense_create((w+140944)+30720,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[163]) { dpdf_model_destroy(m);return NULL; }
-m->dense[164]=dpdf_dense_create((w+140944)+32000,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[164]) { dpdf_model_destroy(m);return NULL; }
-m->dense[165]=dpdf_dense_create((w+140944)+33280,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[165]) { dpdf_model_destroy(m);return NULL; }
-m->dense[166]=dpdf_dense_create((w+140944)+34560,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[166]) { dpdf_model_destroy(m);return NULL; }
-m->dense[167]=dpdf_dense_create((w+140944)+35840,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[167]) { dpdf_model_destroy(m);return NULL; }
-m->dense[168]=dpdf_dense_create((w+140944)+37120,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[168]) { dpdf_model_destroy(m);return NULL; }
-m->dense[169]=dpdf_dense_create((w+140944)+38400,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[169]) { dpdf_model_destroy(m);return NULL; }
-m->dense[170]=dpdf_dense_create((w+140944)+39680,(w+2834056),16,80,(mask&2)?precision:0,0); if (!m->dense[170]) { dpdf_model_destroy(m);return NULL; }
-m->dense[171]=dpdf_dense_create((w+2834136),(w+231632),64,64,(mask&4)?precision:0,0); if (!m->dense[171]) { dpdf_model_destroy(m);return NULL; }
-m->dense[172]=dpdf_dense_create((w+2838232),(w+231824),64,64,(mask&4)?precision:0,0); if (!m->dense[172]) { dpdf_model_destroy(m);return NULL; }
-m->dense[173]=dpdf_dense_create((w+2842328),(w+232016),64,64,(mask&4)?precision:0,0); if (!m->dense[173]) { dpdf_model_destroy(m);return NULL; }
-m->dense[174]=dpdf_dense_create((w+186064),(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[174]) { dpdf_model_destroy(m);return NULL; }
-m->dense[175]=dpdf_dense_create((w+186064)+2048,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[175]) { dpdf_model_destroy(m);return NULL; }
-m->dense[176]=dpdf_dense_create((w+186064)+4096,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[176]) { dpdf_model_destroy(m);return NULL; }
-m->dense[177]=dpdf_dense_create((w+186064)+6144,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[177]) { dpdf_model_destroy(m);return NULL; }
-m->dense[178]=dpdf_dense_create((w+186064)+8192,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[178]) { dpdf_model_destroy(m);return NULL; }
-m->dense[179]=dpdf_dense_create((w+186064)+10240,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[179]) { dpdf_model_destroy(m);return NULL; }
-m->dense[180]=dpdf_dense_create((w+186064)+12288,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[180]) { dpdf_model_destroy(m);return NULL; }
-m->dense[181]=dpdf_dense_create((w+186064)+14336,(w+2846424),64,32,(mask&2)?precision:0,0); if (!m->dense[181]) { dpdf_model_destroy(m);return NULL; }
-m->dense[182]=dpdf_dense_create((w+2846456),(w+202704),256,768,(mask&1)?precision:0,64); if (!m->dense[182]) { dpdf_model_destroy(m);return NULL; }
-m->dense[183]=dpdf_dense_create((w+3043064),(w+203472),256,768,(mask&1)?precision:0,64); if (!m->dense[183]) { dpdf_model_destroy(m);return NULL; }
-m->dense[184]=dpdf_dense_create((w+3239672),(w+204240),256,768,(mask&1)?precision:0,64); if (!m->dense[184]) { dpdf_model_destroy(m);return NULL; }
-m->dense[185]=dpdf_dense_create((w+3436280),(w+205008),256,768,(mask&1)?precision:0,64); if (!m->dense[185]) { dpdf_model_destroy(m);return NULL; }
-m->dense[186]=dpdf_dense_create((w+205776),(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[186]) { dpdf_model_destroy(m);return NULL; }
-m->dense[187]=dpdf_dense_create((w+205776)+512,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[187]) { dpdf_model_destroy(m);return NULL; }
-m->dense[188]=dpdf_dense_create((w+205776)+1024,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[188]) { dpdf_model_destroy(m);return NULL; }
-m->dense[189]=dpdf_dense_create((w+205776)+1536,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[189]) { dpdf_model_destroy(m);return NULL; }
-m->dense[190]=dpdf_dense_create((w+205776)+2048,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[190]) { dpdf_model_destroy(m);return NULL; }
-m->dense[191]=dpdf_dense_create((w+205776)+2560,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[191]) { dpdf_model_destroy(m);return NULL; }
-m->dense[192]=dpdf_dense_create((w+205776)+3072,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[192]) { dpdf_model_destroy(m);return NULL; }
-m->dense[193]=dpdf_dense_create((w+205776)+3584,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[193]) { dpdf_model_destroy(m);return NULL; }
-m->dense[194]=dpdf_dense_create((w+205776)+4096,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[194]) { dpdf_model_destroy(m);return NULL; }
-m->dense[195]=dpdf_dense_create((w+205776)+4608,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[195]) { dpdf_model_destroy(m);return NULL; }
-m->dense[196]=dpdf_dense_create((w+205776)+5120,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[196]) { dpdf_model_destroy(m);return NULL; }
-m->dense[197]=dpdf_dense_create((w+205776)+5632,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[197]) { dpdf_model_destroy(m);return NULL; }
-m->dense[198]=dpdf_dense_create((w+205776)+6144,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[198]) { dpdf_model_destroy(m);return NULL; }
-m->dense[199]=dpdf_dense_create((w+205776)+6656,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[199]) { dpdf_model_destroy(m);return NULL; }
-m->dense[200]=dpdf_dense_create((w+205776)+7168,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[200]) { dpdf_model_destroy(m);return NULL; }
-m->dense[201]=dpdf_dense_create((w+205776)+7680,(w+3632888),32,16,(mask&2)?precision:0,0); if (!m->dense[201]) { dpdf_model_destroy(m);return NULL; }
-m->dense[202]=dpdf_dense_create((w+3632904),(w+232408),10,10,(mask&4)?precision:0,0); if (!m->dense[202]) { dpdf_model_destroy(m);return NULL; }
-m->dense[203]=dpdf_dense_create((w+214224),(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[203]) { dpdf_model_destroy(m);return NULL; }
-m->dense[204]=dpdf_dense_create((w+214224)+960,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[204]) { dpdf_model_destroy(m);return NULL; }
-m->dense[205]=dpdf_dense_create((w+214224)+1920,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[205]) { dpdf_model_destroy(m);return NULL; }
-m->dense[206]=dpdf_dense_create((w+214224)+2880,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[206]) { dpdf_model_destroy(m);return NULL; }
-m->dense[207]=dpdf_dense_create((w+214224)+3840,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[207]) { dpdf_model_destroy(m);return NULL; }
-m->dense[208]=dpdf_dense_create((w+214224)+4800,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[208]) { dpdf_model_destroy(m);return NULL; }
-m->dense[209]=dpdf_dense_create((w+214224)+5760,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[209]) { dpdf_model_destroy(m);return NULL; }
-m->dense[210]=dpdf_dense_create((w+214224)+6720,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[210]) { dpdf_model_destroy(m);return NULL; }
-m->dense[211]=dpdf_dense_create((w+214224)+7680,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[211]) { dpdf_model_destroy(m);return NULL; }
-m->dense[212]=dpdf_dense_create((w+214224)+8640,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[212]) { dpdf_model_destroy(m);return NULL; }
-m->dense[213]=dpdf_dense_create((w+214224)+9600,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[213]) { dpdf_model_destroy(m);return NULL; }
-m->dense[214]=dpdf_dense_create((w+214224)+10560,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[214]) { dpdf_model_destroy(m);return NULL; }
-m->dense[215]=dpdf_dense_create((w+214224)+11520,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[215]) { dpdf_model_destroy(m);return NULL; }
-m->dense[216]=dpdf_dense_create((w+214224)+12480,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[216]) { dpdf_model_destroy(m);return NULL; }
-m->dense[217]=dpdf_dense_create((w+214224)+13440,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[217]) { dpdf_model_destroy(m);return NULL; }
-m->dense[218]=dpdf_dense_create((w+214224)+14400,(w+3633008),16,60,(mask&2)?precision:0,0); if (!m->dense[218]) { dpdf_model_destroy(m);return NULL; }
-m->conv[0]=dpdf_convop_create((w+230544),(w+231120),1,3,480,64,1,480,3,3,1,1,0,1,1,(mask&8)?precision:0); if (!m->conv[0]) { dpdf_model_destroy(m);return NULL; }
-m->conv[1]=dpdf_convop_create((w+16),NULL,64,1,480,64,1,160,1,3,1,3,0,1,64,(mask&8)?precision:0); if (!m->conv[1]) { dpdf_model_destroy(m);return NULL; }
-m->conv[2]=dpdf_convop_create((w+208),NULL,64,1,160,64,1,80,1,3,1,2,0,1,64,(mask&8)?precision:0); if (!m->conv[2]) { dpdf_model_destroy(m);return NULL; }
-m->conv[3]=dpdf_convop_create((w+400),NULL,64,1,80,64,1,40,1,3,1,2,0,1,64,(mask&8)?precision:0); if (!m->conv[3]) { dpdf_model_destroy(m);return NULL; }
-m->conv[4]=dpdf_convop_create((w+592),NULL,1,3,96,32,1,96,3,3,1,1,0,1,1,(mask&8)?precision:0); if (!m->conv[4]) { dpdf_model_destroy(m);return NULL; }
-m->conv[5]=dpdf_convop_create((w+880),NULL,1,3,96,32,1,96,3,3,1,1,0,1,1,(mask&8)?precision:0); if (!m->conv[5]) { dpdf_model_destroy(m);return NULL; }
-m->conv[6]=dpdf_convop_create((w+1168),NULL,64,1,96,64,1,48,1,3,1,2,0,1,64,(mask&8)?precision:0); if (!m->conv[6]) { dpdf_model_destroy(m);return NULL; }
-m->conv[7]=dpdf_convop_create((w+231504),(w+231568),64,1,40,64,1,40,1,1,1,1,0,0,64,(mask&8)?precision:0); if (!m->conv[7]) { dpdf_model_destroy(m);return NULL; }
-m->conv[8]=dpdf_convop_create((w+139600),NULL,64,1,40,64,1,40,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[8]) { dpdf_model_destroy(m);return NULL; }
-m->conv[9]=dpdf_convop_create((w+139792),NULL,64,1,40,64,1,40,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[9]) { dpdf_model_destroy(m);return NULL; }
-m->conv[10]=dpdf_convop_create((w+231696),(w+231760),64,1,80,64,1,80,1,1,1,1,0,0,64,(mask&8)?precision:0); if (!m->conv[10]) { dpdf_model_destroy(m);return NULL; }
-m->conv[11]=dpdf_convop_create((w+139984),NULL,64,1,80,64,1,80,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[11]) { dpdf_model_destroy(m);return NULL; }
-m->conv[12]=dpdf_convop_create((w+140176),NULL,64,1,80,64,1,80,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[12]) { dpdf_model_destroy(m);return NULL; }
-m->conv[13]=dpdf_convop_create((w+231888),(w+231952),64,1,160,64,1,160,1,1,1,1,0,0,64,(mask&8)?precision:0); if (!m->conv[13]) { dpdf_model_destroy(m);return NULL; }
-m->conv[14]=dpdf_convop_create((w+140368),NULL,64,1,160,64,1,160,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[14]) { dpdf_model_destroy(m);return NULL; }
-m->conv[15]=dpdf_convop_create((w+140560),NULL,64,1,160,64,1,160,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[15]) { dpdf_model_destroy(m);return NULL; }
-m->conv[16]=dpdf_convop_create((w+140752),NULL,64,1,160,64,1,160,1,3,1,1,0,1,64,(mask&8)?precision:0); if (!m->conv[16]) { dpdf_model_destroy(m);return NULL; }
-m->conv[17]=dpdf_convop_create((w+232080),(w+232144),64,1,480,64,1,480,1,1,1,1,0,0,64,(mask&8)?precision:0); if (!m->conv[17]) { dpdf_model_destroy(m);return NULL; }
-m->conv[18]=dpdf_convop_create((w+232208),(w+232400),64,1,480,1,1,480,1,3,1,1,0,1,1,(mask&8)?precision:0); if (!m->conv[18]) { dpdf_model_destroy(m);return NULL; }
-m->conv[19]=dpdf_convop_create((w+184464),NULL,32,5,96,5,1,96,5,1,1,1,0,0,1,(mask&8)?precision:0); if (!m->conv[19]) { dpdf_model_destroy(m);return NULL; }
-m->conv[20]=dpdf_convop_create((w+185264),NULL,32,5,96,5,1,96,5,1,1,1,0,0,1,(mask&8)?precision:0); if (!m->conv[20]) { dpdf_model_destroy(m);return NULL; }
+m->blocks[0]=dpdf_create_int8(40,(w+245256),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[0]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[1]=dpdf_create_int8(40,(w+332808),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[1]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[2]=dpdf_create_int8(40,(w+420360),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[2]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[3]=dpdf_create_int8(40,(w+507912),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[3]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[4]=dpdf_create_int8(40,(w+595464),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[4]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[5]=dpdf_create_int8(40,(w+683016),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[5]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[6]=dpdf_create_int8(40,(w+770568),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[6]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[7]=dpdf_create_int8(40,(w+858120),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[7]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[8]=dpdf_create_int8(48,(w+953864),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[8]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[9]=dpdf_create_int8(48,(w+1041416),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[9]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[10]=dpdf_create_int8(48,(w+1128968),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[10]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[11]=dpdf_create_int8(48,(w+1216520),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[11]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[12]=dpdf_create_int8(48,(w+1304072),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[12]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[13]=dpdf_create_int8(48,(w+1391624),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[13]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[14]=dpdf_create_int8(48,(w+1479176),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[14]) { dpdf_model_destroy(m); return NULL; }
+m->blocks[15]=dpdf_create_int8(48,(w+1566728),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[15]) { dpdf_model_destroy(m); return NULL; }
+m->dense[0]=dpdf_dense_create((w+232968),(w+231184),64,64,0); if (!m->dense[0]) { dpdf_model_destroy(m);return NULL; }
+m->dense[1]=dpdf_dense_create((w+237064),(w+231248),64,64,0); if (!m->dense[1]) { dpdf_model_destroy(m);return NULL; }
+m->dense[2]=dpdf_dense_create((w+241160),(w+231312),64,64,0); if (!m->dense[2]) { dpdf_model_destroy(m);return NULL; }
+m->dense[3]=dpdf_dense_create((w+945672),(w+231376),64,64,0); if (!m->dense[3]) { dpdf_model_destroy(m);return NULL; }
+m->dense[4]=dpdf_dense_create((w+949768),(w+231440),64,64,0); if (!m->dense[4]) { dpdf_model_destroy(m);return NULL; }
+m->dense[5]=dpdf_dense_create((w+42832),(w+1654280),96,16,0); if (!m->dense[5]) { dpdf_model_destroy(m);return NULL; }
+m->dense[6]=dpdf_dense_create((w+42832)+1536,(w+1654280),96,16,0); if (!m->dense[6]) { dpdf_model_destroy(m);return NULL; }
+m->dense[7]=dpdf_dense_create((w+42832)+3072,(w+1654280),96,16,0); if (!m->dense[7]) { dpdf_model_destroy(m);return NULL; }
+m->dense[8]=dpdf_dense_create((w+42832)+4608,(w+1654280),96,16,0); if (!m->dense[8]) { dpdf_model_destroy(m);return NULL; }
+m->dense[9]=dpdf_dense_create((w+42832)+6144,(w+1654280),96,16,0); if (!m->dense[9]) { dpdf_model_destroy(m);return NULL; }
+m->dense[10]=dpdf_dense_create((w+42832)+7680,(w+1654280),96,16,0); if (!m->dense[10]) { dpdf_model_destroy(m);return NULL; }
+m->dense[11]=dpdf_dense_create((w+42832)+9216,(w+1654280),96,16,0); if (!m->dense[11]) { dpdf_model_destroy(m);return NULL; }
+m->dense[12]=dpdf_dense_create((w+42832)+10752,(w+1654280),96,16,0); if (!m->dense[12]) { dpdf_model_destroy(m);return NULL; }
+m->dense[13]=dpdf_dense_create((w+42832)+12288,(w+1654280),96,16,0); if (!m->dense[13]) { dpdf_model_destroy(m);return NULL; }
+m->dense[14]=dpdf_dense_create((w+42832)+13824,(w+1654280),96,16,0); if (!m->dense[14]) { dpdf_model_destroy(m);return NULL; }
+m->dense[15]=dpdf_dense_create((w+42832)+15360,(w+1654280),96,16,0); if (!m->dense[15]) { dpdf_model_destroy(m);return NULL; }
+m->dense[16]=dpdf_dense_create((w+42832)+16896,(w+1654280),96,16,0); if (!m->dense[16]) { dpdf_model_destroy(m);return NULL; }
+m->dense[17]=dpdf_dense_create((w+42832)+18432,(w+1654280),96,16,0); if (!m->dense[17]) { dpdf_model_destroy(m);return NULL; }
+m->dense[18]=dpdf_dense_create((w+42832)+19968,(w+1654280),96,16,0); if (!m->dense[18]) { dpdf_model_destroy(m);return NULL; }
+m->dense[19]=dpdf_dense_create((w+42832)+21504,(w+1654280),96,16,0); if (!m->dense[19]) { dpdf_model_destroy(m);return NULL; }
+m->dense[20]=dpdf_dense_create((w+42832)+23040,(w+1654280),96,16,0); if (!m->dense[20]) { dpdf_model_destroy(m);return NULL; }
+m->dense[21]=dpdf_dense_create((w+42832)+24576,(w+1654280),96,16,0); if (!m->dense[21]) { dpdf_model_destroy(m);return NULL; }
+m->dense[22]=dpdf_dense_create((w+42832)+26112,(w+1654280),96,16,0); if (!m->dense[22]) { dpdf_model_destroy(m);return NULL; }
+m->dense[23]=dpdf_dense_create((w+42832)+27648,(w+1654280),96,16,0); if (!m->dense[23]) { dpdf_model_destroy(m);return NULL; }
+m->dense[24]=dpdf_dense_create((w+42832)+29184,(w+1654280),96,16,0); if (!m->dense[24]) { dpdf_model_destroy(m);return NULL; }
+m->dense[25]=dpdf_dense_create((w+42832)+30720,(w+1654280),96,16,0); if (!m->dense[25]) { dpdf_model_destroy(m);return NULL; }
+m->dense[26]=dpdf_dense_create((w+42832)+32256,(w+1654280),96,16,0); if (!m->dense[26]) { dpdf_model_destroy(m);return NULL; }
+m->dense[27]=dpdf_dense_create((w+42832)+33792,(w+1654280),96,16,0); if (!m->dense[27]) { dpdf_model_destroy(m);return NULL; }
+m->dense[28]=dpdf_dense_create((w+42832)+35328,(w+1654280),96,16,0); if (!m->dense[28]) { dpdf_model_destroy(m);return NULL; }
+m->dense[29]=dpdf_dense_create((w+42832)+36864,(w+1654280),96,16,0); if (!m->dense[29]) { dpdf_model_destroy(m);return NULL; }
+m->dense[30]=dpdf_dense_create((w+42832)+38400,(w+1654280),96,16,0); if (!m->dense[30]) { dpdf_model_destroy(m);return NULL; }
+m->dense[31]=dpdf_dense_create((w+42832)+39936,(w+1654280),96,16,0); if (!m->dense[31]) { dpdf_model_destroy(m);return NULL; }
+m->dense[32]=dpdf_dense_create((w+42832)+41472,(w+1654280),96,16,0); if (!m->dense[32]) { dpdf_model_destroy(m);return NULL; }
+m->dense[33]=dpdf_dense_create((w+42832)+43008,(w+1654280),96,16,0); if (!m->dense[33]) { dpdf_model_destroy(m);return NULL; }
+m->dense[34]=dpdf_dense_create((w+42832)+44544,(w+1654280),96,16,0); if (!m->dense[34]) { dpdf_model_destroy(m);return NULL; }
+m->dense[35]=dpdf_dense_create((w+42832)+46080,(w+1654280),96,16,0); if (!m->dense[35]) { dpdf_model_destroy(m);return NULL; }
+m->dense[36]=dpdf_dense_create((w+42832)+47616,(w+1654280),96,16,0); if (!m->dense[36]) { dpdf_model_destroy(m);return NULL; }
+m->dense[37]=dpdf_dense_create((w+1360),(w+1654296),80,16,0); if (!m->dense[37]) { dpdf_model_destroy(m);return NULL; }
+m->dense[38]=dpdf_dense_create((w+1360)+1280,(w+1654296),80,16,0); if (!m->dense[38]) { dpdf_model_destroy(m);return NULL; }
+m->dense[39]=dpdf_dense_create((w+1360)+2560,(w+1654296),80,16,0); if (!m->dense[39]) { dpdf_model_destroy(m);return NULL; }
+m->dense[40]=dpdf_dense_create((w+1360)+3840,(w+1654296),80,16,0); if (!m->dense[40]) { dpdf_model_destroy(m);return NULL; }
+m->dense[41]=dpdf_dense_create((w+1360)+5120,(w+1654296),80,16,0); if (!m->dense[41]) { dpdf_model_destroy(m);return NULL; }
+m->dense[42]=dpdf_dense_create((w+1360)+6400,(w+1654296),80,16,0); if (!m->dense[42]) { dpdf_model_destroy(m);return NULL; }
+m->dense[43]=dpdf_dense_create((w+1360)+7680,(w+1654296),80,16,0); if (!m->dense[43]) { dpdf_model_destroy(m);return NULL; }
+m->dense[44]=dpdf_dense_create((w+1360)+8960,(w+1654296),80,16,0); if (!m->dense[44]) { dpdf_model_destroy(m);return NULL; }
+m->dense[45]=dpdf_dense_create((w+1360)+10240,(w+1654296),80,16,0); if (!m->dense[45]) { dpdf_model_destroy(m);return NULL; }
+m->dense[46]=dpdf_dense_create((w+1360)+11520,(w+1654296),80,16,0); if (!m->dense[46]) { dpdf_model_destroy(m);return NULL; }
+m->dense[47]=dpdf_dense_create((w+1360)+12800,(w+1654296),80,16,0); if (!m->dense[47]) { dpdf_model_destroy(m);return NULL; }
+m->dense[48]=dpdf_dense_create((w+1360)+14080,(w+1654296),80,16,0); if (!m->dense[48]) { dpdf_model_destroy(m);return NULL; }
+m->dense[49]=dpdf_dense_create((w+1360)+15360,(w+1654296),80,16,0); if (!m->dense[49]) { dpdf_model_destroy(m);return NULL; }
+m->dense[50]=dpdf_dense_create((w+1360)+16640,(w+1654296),80,16,0); if (!m->dense[50]) { dpdf_model_destroy(m);return NULL; }
+m->dense[51]=dpdf_dense_create((w+1360)+17920,(w+1654296),80,16,0); if (!m->dense[51]) { dpdf_model_destroy(m);return NULL; }
+m->dense[52]=dpdf_dense_create((w+1360)+19200,(w+1654296),80,16,0); if (!m->dense[52]) { dpdf_model_destroy(m);return NULL; }
+m->dense[53]=dpdf_dense_create((w+1360)+20480,(w+1654296),80,16,0); if (!m->dense[53]) { dpdf_model_destroy(m);return NULL; }
+m->dense[54]=dpdf_dense_create((w+1360)+21760,(w+1654296),80,16,0); if (!m->dense[54]) { dpdf_model_destroy(m);return NULL; }
+m->dense[55]=dpdf_dense_create((w+1360)+23040,(w+1654296),80,16,0); if (!m->dense[55]) { dpdf_model_destroy(m);return NULL; }
+m->dense[56]=dpdf_dense_create((w+1360)+24320,(w+1654296),80,16,0); if (!m->dense[56]) { dpdf_model_destroy(m);return NULL; }
+m->dense[57]=dpdf_dense_create((w+1360)+25600,(w+1654296),80,16,0); if (!m->dense[57]) { dpdf_model_destroy(m);return NULL; }
+m->dense[58]=dpdf_dense_create((w+1360)+26880,(w+1654296),80,16,0); if (!m->dense[58]) { dpdf_model_destroy(m);return NULL; }
+m->dense[59]=dpdf_dense_create((w+1360)+28160,(w+1654296),80,16,0); if (!m->dense[59]) { dpdf_model_destroy(m);return NULL; }
+m->dense[60]=dpdf_dense_create((w+1360)+29440,(w+1654296),80,16,0); if (!m->dense[60]) { dpdf_model_destroy(m);return NULL; }
+m->dense[61]=dpdf_dense_create((w+1360)+30720,(w+1654296),80,16,0); if (!m->dense[61]) { dpdf_model_destroy(m);return NULL; }
+m->dense[62]=dpdf_dense_create((w+1360)+32000,(w+1654296),80,16,0); if (!m->dense[62]) { dpdf_model_destroy(m);return NULL; }
+m->dense[63]=dpdf_dense_create((w+1360)+33280,(w+1654296),80,16,0); if (!m->dense[63]) { dpdf_model_destroy(m);return NULL; }
+m->dense[64]=dpdf_dense_create((w+1360)+34560,(w+1654296),80,16,0); if (!m->dense[64]) { dpdf_model_destroy(m);return NULL; }
+m->dense[65]=dpdf_dense_create((w+1360)+35840,(w+1654296),80,16,0); if (!m->dense[65]) { dpdf_model_destroy(m);return NULL; }
+m->dense[66]=dpdf_dense_create((w+1360)+37120,(w+1654296),80,16,0); if (!m->dense[66]) { dpdf_model_destroy(m);return NULL; }
+m->dense[67]=dpdf_dense_create((w+1360)+38400,(w+1654296),80,16,0); if (!m->dense[67]) { dpdf_model_destroy(m);return NULL; }
+m->dense[68]=dpdf_dense_create((w+1360)+39680,(w+1654296),80,16,0); if (!m->dense[68]) { dpdf_model_destroy(m);return NULL; }
+m->dense[69]=dpdf_dense_create((w+92496),(w+1654312),64,16,0); if (!m->dense[69]) { dpdf_model_destroy(m);return NULL; }
+m->dense[70]=dpdf_dense_create((w+92496)+1024,(w+1654312),64,16,0); if (!m->dense[70]) { dpdf_model_destroy(m);return NULL; }
+m->dense[71]=dpdf_dense_create((w+92496)+2048,(w+1654312),64,16,0); if (!m->dense[71]) { dpdf_model_destroy(m);return NULL; }
+m->dense[72]=dpdf_dense_create((w+92496)+3072,(w+1654312),64,16,0); if (!m->dense[72]) { dpdf_model_destroy(m);return NULL; }
+m->dense[73]=dpdf_dense_create((w+92496)+4096,(w+1654312),64,16,0); if (!m->dense[73]) { dpdf_model_destroy(m);return NULL; }
+m->dense[74]=dpdf_dense_create((w+92496)+5120,(w+1654312),64,16,0); if (!m->dense[74]) { dpdf_model_destroy(m);return NULL; }
+m->dense[75]=dpdf_dense_create((w+92496)+6144,(w+1654312),64,16,0); if (!m->dense[75]) { dpdf_model_destroy(m);return NULL; }
+m->dense[76]=dpdf_dense_create((w+92496)+7168,(w+1654312),64,16,0); if (!m->dense[76]) { dpdf_model_destroy(m);return NULL; }
+m->dense[77]=dpdf_dense_create((w+92496)+8192,(w+1654312),64,16,0); if (!m->dense[77]) { dpdf_model_destroy(m);return NULL; }
+m->dense[78]=dpdf_dense_create((w+92496)+9216,(w+1654312),64,16,0); if (!m->dense[78]) { dpdf_model_destroy(m);return NULL; }
+m->dense[79]=dpdf_dense_create((w+92496)+10240,(w+1654312),64,16,0); if (!m->dense[79]) { dpdf_model_destroy(m);return NULL; }
+m->dense[80]=dpdf_dense_create((w+92496)+11264,(w+1654312),64,16,0); if (!m->dense[80]) { dpdf_model_destroy(m);return NULL; }
+m->dense[81]=dpdf_dense_create((w+92496)+12288,(w+1654312),64,16,0); if (!m->dense[81]) { dpdf_model_destroy(m);return NULL; }
+m->dense[82]=dpdf_dense_create((w+92496)+13312,(w+1654312),64,16,0); if (!m->dense[82]) { dpdf_model_destroy(m);return NULL; }
+m->dense[83]=dpdf_dense_create((w+92496)+14336,(w+1654312),64,16,0); if (!m->dense[83]) { dpdf_model_destroy(m);return NULL; }
+m->dense[84]=dpdf_dense_create((w+92496)+15360,(w+1654312),64,16,0); if (!m->dense[84]) { dpdf_model_destroy(m);return NULL; }
+m->dense[85]=dpdf_dense_create((w+1654328),(w+109136),256,768,64); if (!m->dense[85]) { dpdf_model_destroy(m);return NULL; }
+m->dense[86]=dpdf_dense_create((w+1850936),(w+109904),256,768,64); if (!m->dense[86]) { dpdf_model_destroy(m);return NULL; }
+m->dense[87]=dpdf_dense_create((w+110672),(w+2047544),16,32,0); if (!m->dense[87]) { dpdf_model_destroy(m);return NULL; }
+m->dense[88]=dpdf_dense_create((w+110672)+512,(w+2047544),16,32,0); if (!m->dense[88]) { dpdf_model_destroy(m);return NULL; }
+m->dense[89]=dpdf_dense_create((w+110672)+1024,(w+2047544),16,32,0); if (!m->dense[89]) { dpdf_model_destroy(m);return NULL; }
+m->dense[90]=dpdf_dense_create((w+110672)+1536,(w+2047544),16,32,0); if (!m->dense[90]) { dpdf_model_destroy(m);return NULL; }
+m->dense[91]=dpdf_dense_create((w+110672)+2048,(w+2047544),16,32,0); if (!m->dense[91]) { dpdf_model_destroy(m);return NULL; }
+m->dense[92]=dpdf_dense_create((w+110672)+2560,(w+2047544),16,32,0); if (!m->dense[92]) { dpdf_model_destroy(m);return NULL; }
+m->dense[93]=dpdf_dense_create((w+110672)+3072,(w+2047544),16,32,0); if (!m->dense[93]) { dpdf_model_destroy(m);return NULL; }
+m->dense[94]=dpdf_dense_create((w+110672)+3584,(w+2047544),16,32,0); if (!m->dense[94]) { dpdf_model_destroy(m);return NULL; }
+m->dense[95]=dpdf_dense_create((w+110672)+4096,(w+2047544),16,32,0); if (!m->dense[95]) { dpdf_model_destroy(m);return NULL; }
+m->dense[96]=dpdf_dense_create((w+110672)+4608,(w+2047544),16,32,0); if (!m->dense[96]) { dpdf_model_destroy(m);return NULL; }
+m->dense[97]=dpdf_dense_create((w+110672)+5120,(w+2047544),16,32,0); if (!m->dense[97]) { dpdf_model_destroy(m);return NULL; }
+m->dense[98]=dpdf_dense_create((w+110672)+5632,(w+2047544),16,32,0); if (!m->dense[98]) { dpdf_model_destroy(m);return NULL; }
+m->dense[99]=dpdf_dense_create((w+110672)+6144,(w+2047544),16,32,0); if (!m->dense[99]) { dpdf_model_destroy(m);return NULL; }
+m->dense[100]=dpdf_dense_create((w+110672)+6656,(w+2047544),16,32,0); if (!m->dense[100]) { dpdf_model_destroy(m);return NULL; }
+m->dense[101]=dpdf_dense_create((w+110672)+7168,(w+2047544),16,32,0); if (!m->dense[101]) { dpdf_model_destroy(m);return NULL; }
+m->dense[102]=dpdf_dense_create((w+110672)+7680,(w+2047544),16,32,0); if (!m->dense[102]) { dpdf_model_destroy(m);return NULL; }
+m->dense[103]=dpdf_dense_create((w+119376),(w+2047576),32,16,0); if (!m->dense[103]) { dpdf_model_destroy(m);return NULL; }
+m->dense[104]=dpdf_dense_create((w+119376)+512,(w+2047576),32,16,0); if (!m->dense[104]) { dpdf_model_destroy(m);return NULL; }
+m->dense[105]=dpdf_dense_create((w+119376)+1024,(w+2047576),32,16,0); if (!m->dense[105]) { dpdf_model_destroy(m);return NULL; }
+m->dense[106]=dpdf_dense_create((w+119376)+1536,(w+2047576),32,16,0); if (!m->dense[106]) { dpdf_model_destroy(m);return NULL; }
+m->dense[107]=dpdf_dense_create((w+119376)+2048,(w+2047576),32,16,0); if (!m->dense[107]) { dpdf_model_destroy(m);return NULL; }
+m->dense[108]=dpdf_dense_create((w+119376)+2560,(w+2047576),32,16,0); if (!m->dense[108]) { dpdf_model_destroy(m);return NULL; }
+m->dense[109]=dpdf_dense_create((w+119376)+3072,(w+2047576),32,16,0); if (!m->dense[109]) { dpdf_model_destroy(m);return NULL; }
+m->dense[110]=dpdf_dense_create((w+119376)+3584,(w+2047576),32,16,0); if (!m->dense[110]) { dpdf_model_destroy(m);return NULL; }
+m->dense[111]=dpdf_dense_create((w+119376)+4096,(w+2047576),32,16,0); if (!m->dense[111]) { dpdf_model_destroy(m);return NULL; }
+m->dense[112]=dpdf_dense_create((w+119376)+4608,(w+2047576),32,16,0); if (!m->dense[112]) { dpdf_model_destroy(m);return NULL; }
+m->dense[113]=dpdf_dense_create((w+119376)+5120,(w+2047576),32,16,0); if (!m->dense[113]) { dpdf_model_destroy(m);return NULL; }
+m->dense[114]=dpdf_dense_create((w+119376)+5632,(w+2047576),32,16,0); if (!m->dense[114]) { dpdf_model_destroy(m);return NULL; }
+m->dense[115]=dpdf_dense_create((w+119376)+6144,(w+2047576),32,16,0); if (!m->dense[115]) { dpdf_model_destroy(m);return NULL; }
+m->dense[116]=dpdf_dense_create((w+119376)+6656,(w+2047576),32,16,0); if (!m->dense[116]) { dpdf_model_destroy(m);return NULL; }
+m->dense[117]=dpdf_dense_create((w+119376)+7168,(w+2047576),32,16,0); if (!m->dense[117]) { dpdf_model_destroy(m);return NULL; }
+m->dense[118]=dpdf_dense_create((w+119376)+7680,(w+2047576),32,16,0); if (!m->dense[118]) { dpdf_model_destroy(m);return NULL; }
+m->dense[119]=dpdf_dense_create((w+2047592),(w+127824),256,768,64); if (!m->dense[119]) { dpdf_model_destroy(m);return NULL; }
+m->dense[120]=dpdf_dense_create((w+2244200),(w+128592),256,768,64); if (!m->dense[120]) { dpdf_model_destroy(m);return NULL; }
+m->dense[121]=dpdf_dense_create((w+2440808),(w+129360),256,768,64); if (!m->dense[121]) { dpdf_model_destroy(m);return NULL; }
+m->dense[122]=dpdf_dense_create((w+2637416),(w+130128),256,768,64); if (!m->dense[122]) { dpdf_model_destroy(m);return NULL; }
+m->dense[123]=dpdf_dense_create((w+130896),(w+2834024),16,32,0); if (!m->dense[123]) { dpdf_model_destroy(m);return NULL; }
+m->dense[124]=dpdf_dense_create((w+130896)+512,(w+2834024),16,32,0); if (!m->dense[124]) { dpdf_model_destroy(m);return NULL; }
+m->dense[125]=dpdf_dense_create((w+130896)+1024,(w+2834024),16,32,0); if (!m->dense[125]) { dpdf_model_destroy(m);return NULL; }
+m->dense[126]=dpdf_dense_create((w+130896)+1536,(w+2834024),16,32,0); if (!m->dense[126]) { dpdf_model_destroy(m);return NULL; }
+m->dense[127]=dpdf_dense_create((w+130896)+2048,(w+2834024),16,32,0); if (!m->dense[127]) { dpdf_model_destroy(m);return NULL; }
+m->dense[128]=dpdf_dense_create((w+130896)+2560,(w+2834024),16,32,0); if (!m->dense[128]) { dpdf_model_destroy(m);return NULL; }
+m->dense[129]=dpdf_dense_create((w+130896)+3072,(w+2834024),16,32,0); if (!m->dense[129]) { dpdf_model_destroy(m);return NULL; }
+m->dense[130]=dpdf_dense_create((w+130896)+3584,(w+2834024),16,32,0); if (!m->dense[130]) { dpdf_model_destroy(m);return NULL; }
+m->dense[131]=dpdf_dense_create((w+130896)+4096,(w+2834024),16,32,0); if (!m->dense[131]) { dpdf_model_destroy(m);return NULL; }
+m->dense[132]=dpdf_dense_create((w+130896)+4608,(w+2834024),16,32,0); if (!m->dense[132]) { dpdf_model_destroy(m);return NULL; }
+m->dense[133]=dpdf_dense_create((w+130896)+5120,(w+2834024),16,32,0); if (!m->dense[133]) { dpdf_model_destroy(m);return NULL; }
+m->dense[134]=dpdf_dense_create((w+130896)+5632,(w+2834024),16,32,0); if (!m->dense[134]) { dpdf_model_destroy(m);return NULL; }
+m->dense[135]=dpdf_dense_create((w+130896)+6144,(w+2834024),16,32,0); if (!m->dense[135]) { dpdf_model_destroy(m);return NULL; }
+m->dense[136]=dpdf_dense_create((w+130896)+6656,(w+2834024),16,32,0); if (!m->dense[136]) { dpdf_model_destroy(m);return NULL; }
+m->dense[137]=dpdf_dense_create((w+130896)+7168,(w+2834024),16,32,0); if (!m->dense[137]) { dpdf_model_destroy(m);return NULL; }
+m->dense[138]=dpdf_dense_create((w+130896)+7680,(w+2834024),16,32,0); if (!m->dense[138]) { dpdf_model_destroy(m);return NULL; }
+m->dense[139]=dpdf_dense_create((w+140944),(w+2834056),16,80,0); if (!m->dense[139]) { dpdf_model_destroy(m);return NULL; }
+m->dense[140]=dpdf_dense_create((w+140944)+1280,(w+2834056),16,80,0); if (!m->dense[140]) { dpdf_model_destroy(m);return NULL; }
+m->dense[141]=dpdf_dense_create((w+140944)+2560,(w+2834056),16,80,0); if (!m->dense[141]) { dpdf_model_destroy(m);return NULL; }
+m->dense[142]=dpdf_dense_create((w+140944)+3840,(w+2834056),16,80,0); if (!m->dense[142]) { dpdf_model_destroy(m);return NULL; }
+m->dense[143]=dpdf_dense_create((w+140944)+5120,(w+2834056),16,80,0); if (!m->dense[143]) { dpdf_model_destroy(m);return NULL; }
+m->dense[144]=dpdf_dense_create((w+140944)+6400,(w+2834056),16,80,0); if (!m->dense[144]) { dpdf_model_destroy(m);return NULL; }
+m->dense[145]=dpdf_dense_create((w+140944)+7680,(w+2834056),16,80,0); if (!m->dense[145]) { dpdf_model_destroy(m);return NULL; }
+m->dense[146]=dpdf_dense_create((w+140944)+8960,(w+2834056),16,80,0); if (!m->dense[146]) { dpdf_model_destroy(m);return NULL; }
+m->dense[147]=dpdf_dense_create((w+140944)+10240,(w+2834056),16,80,0); if (!m->dense[147]) { dpdf_model_destroy(m);return NULL; }
+m->dense[148]=dpdf_dense_create((w+140944)+11520,(w+2834056),16,80,0); if (!m->dense[148]) { dpdf_model_destroy(m);return NULL; }
+m->dense[149]=dpdf_dense_create((w+140944)+12800,(w+2834056),16,80,0); if (!m->dense[149]) { dpdf_model_destroy(m);return NULL; }
+m->dense[150]=dpdf_dense_create((w+140944)+14080,(w+2834056),16,80,0); if (!m->dense[150]) { dpdf_model_destroy(m);return NULL; }
+m->dense[151]=dpdf_dense_create((w+140944)+15360,(w+2834056),16,80,0); if (!m->dense[151]) { dpdf_model_destroy(m);return NULL; }
+m->dense[152]=dpdf_dense_create((w+140944)+16640,(w+2834056),16,80,0); if (!m->dense[152]) { dpdf_model_destroy(m);return NULL; }
+m->dense[153]=dpdf_dense_create((w+140944)+17920,(w+2834056),16,80,0); if (!m->dense[153]) { dpdf_model_destroy(m);return NULL; }
+m->dense[154]=dpdf_dense_create((w+140944)+19200,(w+2834056),16,80,0); if (!m->dense[154]) { dpdf_model_destroy(m);return NULL; }
+m->dense[155]=dpdf_dense_create((w+140944)+20480,(w+2834056),16,80,0); if (!m->dense[155]) { dpdf_model_destroy(m);return NULL; }
+m->dense[156]=dpdf_dense_create((w+140944)+21760,(w+2834056),16,80,0); if (!m->dense[156]) { dpdf_model_destroy(m);return NULL; }
+m->dense[157]=dpdf_dense_create((w+140944)+23040,(w+2834056),16,80,0); if (!m->dense[157]) { dpdf_model_destroy(m);return NULL; }
+m->dense[158]=dpdf_dense_create((w+140944)+24320,(w+2834056),16,80,0); if (!m->dense[158]) { dpdf_model_destroy(m);return NULL; }
+m->dense[159]=dpdf_dense_create((w+140944)+25600,(w+2834056),16,80,0); if (!m->dense[159]) { dpdf_model_destroy(m);return NULL; }
+m->dense[160]=dpdf_dense_create((w+140944)+26880,(w+2834056),16,80,0); if (!m->dense[160]) { dpdf_model_destroy(m);return NULL; }
+m->dense[161]=dpdf_dense_create((w+140944)+28160,(w+2834056),16,80,0); if (!m->dense[161]) { dpdf_model_destroy(m);return NULL; }
+m->dense[162]=dpdf_dense_create((w+140944)+29440,(w+2834056),16,80,0); if (!m->dense[162]) { dpdf_model_destroy(m);return NULL; }
+m->dense[163]=dpdf_dense_create((w+140944)+30720,(w+2834056),16,80,0); if (!m->dense[163]) { dpdf_model_destroy(m);return NULL; }
+m->dense[164]=dpdf_dense_create((w+140944)+32000,(w+2834056),16,80,0); if (!m->dense[164]) { dpdf_model_destroy(m);return NULL; }
+m->dense[165]=dpdf_dense_create((w+140944)+33280,(w+2834056),16,80,0); if (!m->dense[165]) { dpdf_model_destroy(m);return NULL; }
+m->dense[166]=dpdf_dense_create((w+140944)+34560,(w+2834056),16,80,0); if (!m->dense[166]) { dpdf_model_destroy(m);return NULL; }
+m->dense[167]=dpdf_dense_create((w+140944)+35840,(w+2834056),16,80,0); if (!m->dense[167]) { dpdf_model_destroy(m);return NULL; }
+m->dense[168]=dpdf_dense_create((w+140944)+37120,(w+2834056),16,80,0); if (!m->dense[168]) { dpdf_model_destroy(m);return NULL; }
+m->dense[169]=dpdf_dense_create((w+140944)+38400,(w+2834056),16,80,0); if (!m->dense[169]) { dpdf_model_destroy(m);return NULL; }
+m->dense[170]=dpdf_dense_create((w+140944)+39680,(w+2834056),16,80,0); if (!m->dense[170]) { dpdf_model_destroy(m);return NULL; }
+m->dense[171]=dpdf_dense_create((w+2834136),(w+231632),64,64,0); if (!m->dense[171]) { dpdf_model_destroy(m);return NULL; }
+m->dense[172]=dpdf_dense_create((w+2838232),(w+231824),64,64,0); if (!m->dense[172]) { dpdf_model_destroy(m);return NULL; }
+m->dense[173]=dpdf_dense_create((w+2842328),(w+232016),64,64,0); if (!m->dense[173]) { dpdf_model_destroy(m);return NULL; }
+m->dense[174]=dpdf_dense_create((w+186064),(w+2846424),64,32,0); if (!m->dense[174]) { dpdf_model_destroy(m);return NULL; }
+m->dense[175]=dpdf_dense_create((w+186064)+2048,(w+2846424),64,32,0); if (!m->dense[175]) { dpdf_model_destroy(m);return NULL; }
+m->dense[176]=dpdf_dense_create((w+186064)+4096,(w+2846424),64,32,0); if (!m->dense[176]) { dpdf_model_destroy(m);return NULL; }
+m->dense[177]=dpdf_dense_create((w+186064)+6144,(w+2846424),64,32,0); if (!m->dense[177]) { dpdf_model_destroy(m);return NULL; }
+m->dense[178]=dpdf_dense_create((w+186064)+8192,(w+2846424),64,32,0); if (!m->dense[178]) { dpdf_model_destroy(m);return NULL; }
+m->dense[179]=dpdf_dense_create((w+186064)+10240,(w+2846424),64,32,0); if (!m->dense[179]) { dpdf_model_destroy(m);return NULL; }
+m->dense[180]=dpdf_dense_create((w+186064)+12288,(w+2846424),64,32,0); if (!m->dense[180]) { dpdf_model_destroy(m);return NULL; }
+m->dense[181]=dpdf_dense_create((w+186064)+14336,(w+2846424),64,32,0); if (!m->dense[181]) { dpdf_model_destroy(m);return NULL; }
+m->dense[182]=dpdf_dense_create((w+2846456),(w+202704),256,768,64); if (!m->dense[182]) { dpdf_model_destroy(m);return NULL; }
+m->dense[183]=dpdf_dense_create((w+3043064),(w+203472),256,768,64); if (!m->dense[183]) { dpdf_model_destroy(m);return NULL; }
+m->dense[184]=dpdf_dense_create((w+3239672),(w+204240),256,768,64); if (!m->dense[184]) { dpdf_model_destroy(m);return NULL; }
+m->dense[185]=dpdf_dense_create((w+3436280),(w+205008),256,768,64); if (!m->dense[185]) { dpdf_model_destroy(m);return NULL; }
+m->dense[186]=dpdf_dense_create((w+205776),(w+3632888),32,16,0); if (!m->dense[186]) { dpdf_model_destroy(m);return NULL; }
+m->dense[187]=dpdf_dense_create((w+205776)+512,(w+3632888),32,16,0); if (!m->dense[187]) { dpdf_model_destroy(m);return NULL; }
+m->dense[188]=dpdf_dense_create((w+205776)+1024,(w+3632888),32,16,0); if (!m->dense[188]) { dpdf_model_destroy(m);return NULL; }
+m->dense[189]=dpdf_dense_create((w+205776)+1536,(w+3632888),32,16,0); if (!m->dense[189]) { dpdf_model_destroy(m);return NULL; }
+m->dense[190]=dpdf_dense_create((w+205776)+2048,(w+3632888),32,16,0); if (!m->dense[190]) { dpdf_model_destroy(m);return NULL; }
+m->dense[191]=dpdf_dense_create((w+205776)+2560,(w+3632888),32,16,0); if (!m->dense[191]) { dpdf_model_destroy(m);return NULL; }
+m->dense[192]=dpdf_dense_create((w+205776)+3072,(w+3632888),32,16,0); if (!m->dense[192]) { dpdf_model_destroy(m);return NULL; }
+m->dense[193]=dpdf_dense_create((w+205776)+3584,(w+3632888),32,16,0); if (!m->dense[193]) { dpdf_model_destroy(m);return NULL; }
+m->dense[194]=dpdf_dense_create((w+205776)+4096,(w+3632888),32,16,0); if (!m->dense[194]) { dpdf_model_destroy(m);return NULL; }
+m->dense[195]=dpdf_dense_create((w+205776)+4608,(w+3632888),32,16,0); if (!m->dense[195]) { dpdf_model_destroy(m);return NULL; }
+m->dense[196]=dpdf_dense_create((w+205776)+5120,(w+3632888),32,16,0); if (!m->dense[196]) { dpdf_model_destroy(m);return NULL; }
+m->dense[197]=dpdf_dense_create((w+205776)+5632,(w+3632888),32,16,0); if (!m->dense[197]) { dpdf_model_destroy(m);return NULL; }
+m->dense[198]=dpdf_dense_create((w+205776)+6144,(w+3632888),32,16,0); if (!m->dense[198]) { dpdf_model_destroy(m);return NULL; }
+m->dense[199]=dpdf_dense_create((w+205776)+6656,(w+3632888),32,16,0); if (!m->dense[199]) { dpdf_model_destroy(m);return NULL; }
+m->dense[200]=dpdf_dense_create((w+205776)+7168,(w+3632888),32,16,0); if (!m->dense[200]) { dpdf_model_destroy(m);return NULL; }
+m->dense[201]=dpdf_dense_create((w+205776)+7680,(w+3632888),32,16,0); if (!m->dense[201]) { dpdf_model_destroy(m);return NULL; }
+m->dense[202]=dpdf_dense_create((w+3632904),(w+232408),10,10,0); if (!m->dense[202]) { dpdf_model_destroy(m);return NULL; }
+m->dense[203]=dpdf_dense_create((w+214224),(w+3633008),16,60,0); if (!m->dense[203]) { dpdf_model_destroy(m);return NULL; }
+m->dense[204]=dpdf_dense_create((w+214224)+960,(w+3633008),16,60,0); if (!m->dense[204]) { dpdf_model_destroy(m);return NULL; }
+m->dense[205]=dpdf_dense_create((w+214224)+1920,(w+3633008),16,60,0); if (!m->dense[205]) { dpdf_model_destroy(m);return NULL; }
+m->dense[206]=dpdf_dense_create((w+214224)+2880,(w+3633008),16,60,0); if (!m->dense[206]) { dpdf_model_destroy(m);return NULL; }
+m->dense[207]=dpdf_dense_create((w+214224)+3840,(w+3633008),16,60,0); if (!m->dense[207]) { dpdf_model_destroy(m);return NULL; }
+m->dense[208]=dpdf_dense_create((w+214224)+4800,(w+3633008),16,60,0); if (!m->dense[208]) { dpdf_model_destroy(m);return NULL; }
+m->dense[209]=dpdf_dense_create((w+214224)+5760,(w+3633008),16,60,0); if (!m->dense[209]) { dpdf_model_destroy(m);return NULL; }
+m->dense[210]=dpdf_dense_create((w+214224)+6720,(w+3633008),16,60,0); if (!m->dense[210]) { dpdf_model_destroy(m);return NULL; }
+m->dense[211]=dpdf_dense_create((w+214224)+7680,(w+3633008),16,60,0); if (!m->dense[211]) { dpdf_model_destroy(m);return NULL; }
+m->dense[212]=dpdf_dense_create((w+214224)+8640,(w+3633008),16,60,0); if (!m->dense[212]) { dpdf_model_destroy(m);return NULL; }
+m->dense[213]=dpdf_dense_create((w+214224)+9600,(w+3633008),16,60,0); if (!m->dense[213]) { dpdf_model_destroy(m);return NULL; }
+m->dense[214]=dpdf_dense_create((w+214224)+10560,(w+3633008),16,60,0); if (!m->dense[214]) { dpdf_model_destroy(m);return NULL; }
+m->dense[215]=dpdf_dense_create((w+214224)+11520,(w+3633008),16,60,0); if (!m->dense[215]) { dpdf_model_destroy(m);return NULL; }
+m->dense[216]=dpdf_dense_create((w+214224)+12480,(w+3633008),16,60,0); if (!m->dense[216]) { dpdf_model_destroy(m);return NULL; }
+m->dense[217]=dpdf_dense_create((w+214224)+13440,(w+3633008),16,60,0); if (!m->dense[217]) { dpdf_model_destroy(m);return NULL; }
+m->dense[218]=dpdf_dense_create((w+214224)+14400,(w+3633008),16,60,0); if (!m->dense[218]) { dpdf_model_destroy(m);return NULL; }
+m->conv[0]=dpdf_convop_create((w+230544),(w+231120),1,3,480,64,1,480,3,3,1,1,0,1,1); if (!m->conv[0]) { dpdf_model_destroy(m);return NULL; }
+m->conv[1]=dpdf_convop_create((w+16),NULL,64,1,480,64,1,160,1,3,1,3,0,1,64); if (!m->conv[1]) { dpdf_model_destroy(m);return NULL; }
+m->conv[2]=dpdf_convop_create((w+208),NULL,64,1,160,64,1,80,1,3,1,2,0,1,64); if (!m->conv[2]) { dpdf_model_destroy(m);return NULL; }
+m->conv[3]=dpdf_convop_create((w+400),NULL,64,1,80,64,1,40,1,3,1,2,0,1,64); if (!m->conv[3]) { dpdf_model_destroy(m);return NULL; }
+m->conv[4]=dpdf_convop_create((w+592),NULL,1,3,96,32,1,96,3,3,1,1,0,1,1); if (!m->conv[4]) { dpdf_model_destroy(m);return NULL; }
+m->conv[5]=dpdf_convop_create((w+880),NULL,1,3,96,32,1,96,3,3,1,1,0,1,1); if (!m->conv[5]) { dpdf_model_destroy(m);return NULL; }
+m->conv[6]=dpdf_convop_create((w+1168),NULL,64,1,96,64,1,48,1,3,1,2,0,1,64); if (!m->conv[6]) { dpdf_model_destroy(m);return NULL; }
+m->conv[7]=dpdf_convop_create((w+231504),(w+231568),64,1,40,64,1,40,1,1,1,1,0,0,64); if (!m->conv[7]) { dpdf_model_destroy(m);return NULL; }
+m->conv[8]=dpdf_convop_create((w+139600),NULL,64,1,40,64,1,40,1,3,1,1,0,1,64); if (!m->conv[8]) { dpdf_model_destroy(m);return NULL; }
+m->conv[9]=dpdf_convop_create((w+139792),NULL,64,1,40,64,1,40,1,3,1,1,0,1,64); if (!m->conv[9]) { dpdf_model_destroy(m);return NULL; }
+m->conv[10]=dpdf_convop_create((w+231696),(w+231760),64,1,80,64,1,80,1,1,1,1,0,0,64); if (!m->conv[10]) { dpdf_model_destroy(m);return NULL; }
+m->conv[11]=dpdf_convop_create((w+139984),NULL,64,1,80,64,1,80,1,3,1,1,0,1,64); if (!m->conv[11]) { dpdf_model_destroy(m);return NULL; }
+m->conv[12]=dpdf_convop_create((w+140176),NULL,64,1,80,64,1,80,1,3,1,1,0,1,64); if (!m->conv[12]) { dpdf_model_destroy(m);return NULL; }
+m->conv[13]=dpdf_convop_create((w+231888),(w+231952),64,1,160,64,1,160,1,1,1,1,0,0,64); if (!m->conv[13]) { dpdf_model_destroy(m);return NULL; }
+m->conv[14]=dpdf_convop_create((w+140368),NULL,64,1,160,64,1,160,1,3,1,1,0,1,64); if (!m->conv[14]) { dpdf_model_destroy(m);return NULL; }
+m->conv[15]=dpdf_convop_create((w+140560),NULL,64,1,160,64,1,160,1,3,1,1,0,1,64); if (!m->conv[15]) { dpdf_model_destroy(m);return NULL; }
+m->conv[16]=dpdf_convop_create((w+140752),NULL,64,1,160,64,1,160,1,3,1,1,0,1,64); if (!m->conv[16]) { dpdf_model_destroy(m);return NULL; }
+m->conv[17]=dpdf_convop_create((w+232080),(w+232144),64,1,480,64,1,480,1,1,1,1,0,0,64); if (!m->conv[17]) { dpdf_model_destroy(m);return NULL; }
+m->conv[18]=dpdf_convop_create((w+232208),(w+232400),64,1,480,1,1,480,1,3,1,1,0,1,1); if (!m->conv[18]) { dpdf_model_destroy(m);return NULL; }
+m->conv[19]=dpdf_convop_create((w+184464),NULL,32,5,96,5,1,96,5,1,1,1,0,0,1); if (!m->conv[19]) { dpdf_model_destroy(m);return NULL; }
+m->conv[20]=dpdf_convop_create((w+185264),NULL,32,5,96,5,1,96,5,1,1,1,0,0,1); if (!m->conv[20]) { dpdf_model_destroy(m);return NULL; }
 return m;
 }
-dpdf_model *dpdf_model_create(const float *w,size_t count,int tier) {
-return dpdf_model_create_config(w,count,tier,0,0);
-}
+
 size_t dpdf_model_owned_bytes(const dpdf_model *m) {
 if (!m) return 0;
 size_t bytes=sizeof(*m)+7137*sizeof(float)+31+dpdf_model_arena_bytes();
@@ -423,25 +408,25 @@ for (int i=0;i<30720;++i) (m->arena+38512)[i]=((m->arena+7792)[i]>0?(m->arena+77
 /* 48: Conv /model/enc/erb_conv1/erb_conv1.0/Conv */
 dpdf_convop_run(m->conv[1],(m->arena+38512),(m->arena+4896));
 /* 49: Conv /model/enc/erb_conv1/erb_conv1.1/Conv */
-m->transpose((m->arena+4896),(m->arena+25376),64,160);
+dpdf_transpose_avx2((m->arena+4896),(m->arena+25376),64,160);
 dpdf_dense_run(m->dense[0],(m->arena+25376),(m->arena+69232),160);
-m->transpose((m->arena+69232),(m->arena+15136),160,64);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),160,64);
 /* 50: Relu /model/enc/erb_conv1/erb_conv1.3/Relu */
 for (int i=0;i<10240;++i) (m->arena+4896)[i]=((m->arena+15136)[i]>0?(m->arena+15136)[i]:0.0f);
 /* 51: Conv /model/enc/erb_conv2/erb_conv2.0/Conv */
 dpdf_convop_run(m->conv[2],(m->arena+4896),(m->arena+69232));
 /* 52: Conv /model/enc/erb_conv2/erb_conv2.1/Conv */
-m->transpose((m->arena+69232),(m->arena+15136),64,80);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),64,80);
 dpdf_dense_run(m->dense[1],(m->arena+15136),(m->arena+20256),80);
-m->transpose((m->arena+20256),(m->arena+74352),80,64);
+dpdf_transpose_avx2((m->arena+20256),(m->arena+74352),80,64);
 /* 53: Relu /model/enc/erb_conv2/erb_conv2.3/Relu */
 for (int i=0;i<5120;++i) (m->arena+69232)[i]=((m->arena+74352)[i]>0?(m->arena+74352)[i]:0.0f);
 /* 54: Conv /model/enc/erb_conv3/erb_conv3.0/Conv */
 dpdf_convop_run(m->conv[3],(m->arena+69232),(m->arena+74352));
 /* 55: Conv /model/enc/erb_conv3/erb_conv3.1/Conv */
-m->transpose((m->arena+74352),(m->arena+15136),64,40);
+dpdf_transpose_avx2((m->arena+74352),(m->arena+15136),64,40);
 dpdf_dense_run(m->dense[2],(m->arena+15136),(m->arena+17696),40);
-m->transpose((m->arena+17696),(m->arena+76912),40,64);
+dpdf_transpose_avx2((m->arena+17696),(m->arena+76912),40,64);
 /* 56: Relu /model/enc/erb_conv3/erb_conv3.3/Relu */
 for (int i=0;i<2560;++i) (m->arena+74352)[i]=((m->arena+76912)[i]>0?(m->arena+76912)[i]:0.0f);
 /* 57: Slice /model/enc/dprnn_erb/blocks.0/inter_gru/Slice */
@@ -490,17 +475,17 @@ dpdf_convop_run(m->conv[5],((m->arena+2144)+288),(m->arena+82544));
 for (int b=0;b<1;++b) memcpy((m->arena+85616)+b*6144+0,(m->arena+79472)+b*3072,3072*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+85616)+b*6144+3072,(m->arena+82544)+b*3072,3072*sizeof(float));
 /* 86: Conv /model/enc/df_conv0/df_conv0.2/Conv */
-m->transpose((m->arena+85616),(m->arena+91760),64,96);
+dpdf_transpose_avx2((m->arena+85616),(m->arena+91760),64,96);
 dpdf_dense_run(m->dense[3],(m->arena+91760),(m->arena+97904),96);
-m->transpose((m->arena+97904),(m->arena+76912),96,64);
+dpdf_transpose_avx2((m->arena+97904),(m->arena+76912),96,64);
 /* 87: Relu /model/enc/df_conv0/df_conv0.4/Relu */
 for (int i=0;i<6144;++i) (m->arena+83056)[i]=((m->arena+76912)[i]>0?(m->arena+76912)[i]:0.0f);
 /* 88: Conv /model/enc/df_conv1/df_conv1.0/Conv */
 dpdf_convop_run(m->conv[6],(m->arena+83056),(m->arena+76912));
 /* 89: Conv /model/enc/df_conv1/df_conv1.1/Conv */
-m->transpose((m->arena+76912),(m->arena+89200),64,48);
+dpdf_transpose_avx2((m->arena+76912),(m->arena+89200),64,48);
 dpdf_dense_run(m->dense[4],(m->arena+89200),(m->arena+92272),48);
-m->transpose((m->arena+92272),(m->arena+79984),48,64);
+dpdf_transpose_avx2((m->arena+92272),(m->arena+79984),48,64);
 /* 90: Relu /model/enc/df_conv1/df_conv1.3/Relu */
 for (int i=0;i<3072;++i) (m->arena+76912)[i]=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f);
 /* 91: Slice /model/enc/dprnn_df/blocks.0/inter_gru/Slice */
@@ -657,9 +642,9 @@ for (int b=0;b<1;++b) memcpy((m->arena+116336)+b*5120+2560,(m->arena+76912)+b*25
 for (int t1=0;t1<64;++t1) for (int t3=0;t3<40;++t3) for (int t4=0;t4<2;++t4) (m->arena+74352)[t1*80+t3*2+t4*1]=(m->arena+116336)[t1*40+t3*1+t4*2560];
 /* 222: Reshape /model/erb_dec/convt3/convt3.0/Reshape_1 */
 /* 223: Conv /model/erb_dec/convt3/convt3.1/Conv */
-m->transpose((m->arena+74352),(m->arena+121456),64,80);
+dpdf_transpose_avx2((m->arena+74352),(m->arena+121456),64,80);
 dpdf_dense_run(m->dense[171],(m->arena+121456),(m->arena+126576),80);
-m->transpose((m->arena+126576),(m->arena+116336),80,64);
+dpdf_transpose_avx2((m->arena+126576),(m->arena+116336),80,64);
 /* 224: Relu /model/erb_dec/convt3/convt3.3/Relu */
 for (int i=0;i<5120;++i) (m->arena+74352)[i]=((m->arena+116336)[i]>0?(m->arena+116336)[i]:0.0f);
 /* 225: Conv /model/erb_dec/conv2p/conv2p.0/Conv */
@@ -680,9 +665,9 @@ for (int b=0;b<1;++b) memcpy((m->arena+69232)+b*10240+5120,(m->arena+126576)+b*5
 for (int t1=0;t1<64;++t1) for (int t3=0;t3<80;++t3) for (int t4=0;t4<2;++t4) (m->arena+116336)[t1*160+t3*2+t4*1]=(m->arena+69232)[t1*80+t3*1+t4*5120];
 /* 233: Reshape /model/erb_dec/convt2/convt2.0/Reshape_1 */
 /* 234: Conv /model/erb_dec/convt2/convt2.1/Conv */
-m->transpose((m->arena+116336),(m->arena+131696),64,160);
+dpdf_transpose_avx2((m->arena+116336),(m->arena+131696),64,160);
 dpdf_dense_run(m->dense[172],(m->arena+131696),(m->arena+141936),160);
-m->transpose((m->arena+141936),(m->arena+69232),160,64);
+dpdf_transpose_avx2((m->arena+141936),(m->arena+69232),160,64);
 /* 235: Relu /model/erb_dec/convt2/convt2.3/Relu */
 for (int i=0;i<10240;++i) (m->arena+116336)[i]=((m->arena+69232)[i]>0?(m->arena+69232)[i]:0.0f);
 /* 236: Conv /model/erb_dec/conv1p/conv1p.0/Conv */
@@ -706,9 +691,9 @@ for (int b=0;b<1;++b) memcpy((m->arena+152176)+b*30720+20480,(m->arena+126576)+b
 for (int t1=0;t1<64;++t1) for (int t3=0;t3<160;++t3) for (int t4=0;t4<3;++t4) (m->arena+116336)[t1*480+t3*3+t4*1]=(m->arena+152176)[t1*160+t3*1+t4*10240];
 /* 245: Reshape /model/erb_dec/convt1/convt1.0/Reshape_1 */
 /* 246: Conv /model/erb_dec/convt1/convt1.1/Conv */
-m->transpose((m->arena+116336),(m->arena+182896),64,480);
+dpdf_transpose_avx2((m->arena+116336),(m->arena+182896),64,480);
 dpdf_dense_run(m->dense[173],(m->arena+182896),(m->arena+213616),480);
-m->transpose((m->arena+213616),(m->arena+147056),480,64);
+dpdf_transpose_avx2((m->arena+213616),(m->arena+147056),480,64);
 /* 247: Relu /model/erb_dec/convt1/convt1.3/Relu */
 for (int i=0;i<30720;++i) (m->arena+116336)[i]=((m->arena+147056)[i]>0?(m->arena+147056)[i]:0.0f);
 /* 248: Conv /model/erb_dec/conv0p/conv0p.0/Conv */
@@ -783,9 +768,9 @@ dpdf_convop_run(m->conv[20],((m->arena+116336)+15360),(m->arena+2144));
 for (int b=0;b<1;++b) memcpy((m->arena+101488)+b*960+0,(m->arena+17952)+b*480,480*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+101488)+b*960+480,(m->arena+2144)+b*480,480*sizeof(float));
 /* 313: Conv /model/df_dec/df_convp/df_convp.2/Conv */
-m->transpose((m->arena+101488),(m->arena+4896),10,96);
+dpdf_transpose_avx2((m->arena+101488),(m->arena+4896),10,96);
 dpdf_dense_run(m->dense[202],(m->arena+4896),(m->arena+5856),96);
-m->transpose((m->arena+5856),(m->arena+102448),96,10);
+dpdf_transpose_avx2((m->arena+5856),(m->arena+102448),96,10);
 /* 314: Relu /model/df_dec/df_convp/df_convp.4/Relu */
 for (int i=0;i<960;++i) (m->arena+101488)[i]=((m->arena+102448)[i]>0?(m->arena+102448)[i]:0.0f);
 /* 315: Transpose /model/df_dec/Transpose */

@@ -40,10 +40,9 @@ or change quantization rounding without new numerical and audio evidence.
 - `private/` holds kernel declarations and namespace mappings. These headers
   are not installed and do not define a consumer ABI.
 
-Private scalar and precision helpers remain as numerical oracles/fallback
-building blocks for contract tests. The public API exposes only the final
-optimized configuration; there are no experimental runtime presets or
-alternative model packages.
+Independent scalar reference calculations remain in contract tests to check
+quantized arithmetic, convolutions and normalization. The production graph
+is fixed to W7A8; the only CPU dispatch selects AVX-VNNI or AVX2 kernels.
 
 ## Validation expectations
 

@@ -1,8 +1,10 @@
 # Performance, memory and output quality
 
-These measurements describe the final combined library built from this folder,
-with the recommended model-8 compiler profile. They are host-specific
-observations, not portable latency or worst-case execution-time guarantees.
+The latency and RSS measurements in this section are **historical** results
+from the original fitted W7A8 reference build, with its recommended model-8
+compiler profile. They precede the fixed-W7A8 graph simplification and have
+not been rerun for that change. They are host-specific observations, not
+portable latency or worst-case execution-time guarantees.
 
 ## Latency and memory
 
@@ -66,11 +68,15 @@ in that audit and 1.624 ms in the first C benchmark batch. These records do not
 separate caller overhead from machine/session effects. Mean ± SD improves the
 description of variability; it does not establish an optimization gain.
 
-Exact context-owned allocations are **3,984,320 bytes** and **5,323,412 bytes**,
-respectively, including the 16-byte public API wrapper. Caller state requires
-another 225,744 or 360,912 bytes, plus spectral/audio buffers and stack. Weight
-files contain 10,329,776 or 14,532,272 bytes of float32 data; creation repacks
-them into the optimized representation and temporarily needs both forms.
+For the current fixed-W7A8-only implementation, `dpdfnet_owned_bytes()`
+reports **3,980,284 bytes** (model 2) and **5,319,868 bytes** (model 8),
+including the 16-byte public API wrapper. These exact owned-allocation counts
+were checked against both bundled weight files on an x86-64 release build;
+they are **not** the historical RSS measurements in the table above. Caller
+state requires another 225,744 or 360,912 bytes, plus spectral/audio buffers
+and stack. Weight files contain 10,329,776 or 14,532,272 bytes of float32
+data; creation repacks them into the optimized representation and temporarily
+needs both forms.
 
 This RSS protocol belongs to the C worker and should not be mixed with
 imported-Python-runtime memory measurements.
@@ -109,10 +115,12 @@ model**, including flush hops. Reset replay and independent concurrent contexts
 also match. This broader check preserves outputs; its 65 files were not all
 scored for perceptual quality.
 
-All **19 contract tests** pass in the release, ASan/UBSan and static builds.
-They cover the public API, both model lifetimes, weight ownership, reset,
-in-place processing, graph layouts, scalar numerical oracles and guarded
-assembly boundaries/FP control modes. Separate installed shared/static CMake
+The **19 baseline contract tests** cover the public API, both model lifetimes,
+weight ownership, reset, in-place processing, graph layouts, scalar numerical
+oracles and guarded assembly boundaries/FP control modes. When AVX-VNNI is
+available, six additional contracts exercise its specialized kernels. The
+fixed-W7A8 cleanup passed all 25 in a VNNI-enabled release build and all 19
+in the AVX2-only fallback build. Separate installed shared/static CMake
 consumers build and run. The shared kernel consolidation also matches the
 accepted per-model C sources after preprocessing.
 

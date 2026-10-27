@@ -15,21 +15,13 @@ int main(int argc,char **argv) {
     CHECK(weights && a && b && next);
     FILE *f=fopen(argv[1],"rb"); CHECK(f);
     CHECK(fread(weights,sizeof(float),n,f)==n); CHECK(fgetc(f)==EOF); fclose(f);
-    CHECK(!dpdf_model_create(NULL,n,0)); CHECK(!dpdf_model_create(weights,n-1,0));
-    CHECK(!dpdf_model_create(weights,n,5)); CHECK(dpdf_model_init_state(NULL)==-1);
-    if (!dpdf_has_avx2()) {
-        CHECK(!dpdf_model_create(weights,n,DPDF_AVX2));
-        CHECK(!dpdf_model_create(weights,n,DPDF_EXPERIMENTAL_INT8));
-    }
-    if (!dpdf_has_fp16()) CHECK(!dpdf_model_create(weights,n,DPDF_EXPERIMENTAL_FP16));
-    float saved=weights[0]; weights[0]=NAN; CHECK(!dpdf_model_create(weights,n,0)); weights[0]=saved;
+    CHECK(!dpdf_model_create(NULL,n)); CHECK(!dpdf_model_create(weights,n-1));
+    CHECK(dpdf_model_init_state(NULL)==-1);
+    if (!dpdf_has_avx2()) CHECK(!dpdf_model_create(weights,n));
+    float saved=weights[0]; weights[0]=NAN; CHECK(!dpdf_model_create(weights,n)); weights[0]=saved;
     dpdf_model_destroy(NULL);
-    int tiers[]={DPDF_SCALAR,DPDF_AVX2,DPDF_EXPERIMENTAL_FP16,DPDF_EXPERIMENTAL_INT8};
-    for (int t=0;t<4;++t) {
-        if (t==1 && !dpdf_has_avx2()) continue;
-        if (t==2 && !dpdf_has_fp16()) continue;
-        if (t==3 && !dpdf_has_avx2()) continue;
-        dpdf_model *m=dpdf_model_create(weights,n,tiers[t]); CHECK(m);
+    if (dpdf_has_avx2()) {
+        dpdf_model *m=dpdf_model_create(weights,n); CHECK(m);
         CHECK(dpdf_model_init_state(a)==0); CHECK(dpdf_model_init_state(b)==0);
         float x[962],y[962],z[962];
         CHECK(dpdf_model_process(NULL,x,a,y,next)==-1);
@@ -48,7 +40,7 @@ int main(int argc,char **argv) {
             memcpy(a,next,state_size*sizeof(float));
         }
         /* Reusing an arena after reset must match a fresh context. */
-        dpdf_model *fresh=dpdf_model_create(weights,n,tiers[t]); CHECK(fresh);
+        dpdf_model *fresh=dpdf_model_create(weights,n); CHECK(fresh);
         CHECK(dpdf_model_init_state(a)==0); CHECK(dpdf_model_init_state(b)==0);
         CHECK(dpdf_model_process(m,x,a,y,a)==0);
         CHECK(dpdf_model_process(fresh,x,b,z,b)==0);
