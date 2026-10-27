@@ -67,6 +67,10 @@ Inference uses one calling thread and requires no ONNX Runtime.
 See [performance and output quality](optimized_inference/docs/PERFORMANCE.md)
 for measurements and their scope; the 50 ms algorithmic delay is unchanged.
 
+The native library is also available as an opt-in `StreamEnhancer` backend,
+sharing the Python streaming audio frontend; see
+[native streaming usage](package/README.md#real-time-microphone-enhancement).
+
 ## Install the PyPI Package
 
 For CPU-only ONNX inference using the packaged CLI and Python API:

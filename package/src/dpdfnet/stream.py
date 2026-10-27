@@ -31,10 +31,12 @@ class StreamEnhancer:
         model: Model name (default: ``"dpdfnet2"``).
         onnx_path: Optional path to a custom ONNX file; overrides *model*.
         verbose: Print model resolution / download progress.
-        backend: ``"onnx"`` (portable default) or ``"openvino"`` (optional
-            float32 CPU runtime). Both run one frame at a time on one CPU thread.
-            Construction includes a warmup inference and clears its state before
-            accepting audio. Construct the enhancer outside the audio callback.
+        backend: ``"onnx"``, ``"openvino"``, or ``"native"``. Native uses the
+            separately built W7A8 C runtime for either 48 kHz HR model.
+            Construction warms inference and resets its state before accepting
+            audio. Construct the enhancer outside the audio callback.
+        native_library: Path to the built C shared library, for native inference.
+        native_weights: Path to the corresponding bundled native weights.
     """
 
     def __init__(
@@ -44,25 +46,42 @@ class StreamEnhancer:
         verbose: bool = False,
         *,
         backend: str = "onnx",
+        native_library: Optional[Union[str, Path]] = None,
+        native_weights: Optional[Union[str, Path]] = None,
     ) -> None:
-        if backend not in {"onnx", "openvino"}:
-            raise ValueError("backend must be 'onnx' or 'openvino'.")
-        resolved = resolve_model(
-            model=model,
-            onnx_path=onnx_path,
-            auto_download=True,
-            verbose=verbose,
-        )
-        self._model_sr: int = resolved.info.sample_rate
-        if backend == "onnx":
-            runtime = build_runtime_model(resolved.onnx_path)
-            self._win_len = infer_win_len(runtime.session, self._model_sr)
-            self._runner = OnnxFrameRunner(runtime, self._win_len)
-        else:
-            from .openvino_backend import OpenVINOFrameRunner
+        if backend not in {"onnx", "openvino", "native"}:
+            raise ValueError("backend must be 'onnx', 'openvino', or 'native'.")
+        if backend == "native":
+            if onnx_path is not None:
+                raise ValueError("onnx_path cannot be used with the native backend")
+            if native_library is None or native_weights is None:
+                raise ValueError("native backend needs native_library and native_weights")
+            from .native_backend import NativeFrameRunner
 
-            self._runner = OpenVINOFrameRunner(resolved.onnx_path)
+            self._runner = NativeFrameRunner(
+                model, Path(native_library), Path(native_weights)
+            )
+            self._model_sr = self._runner.sample_rate
             self._win_len = self._runner.win_len
+        else:
+            if native_library is not None or native_weights is not None:
+                raise ValueError("native_library/native_weights need backend='native'")
+            resolved = resolve_model(
+                model=model,
+                onnx_path=onnx_path,
+                auto_download=True,
+                verbose=verbose,
+            )
+            self._model_sr = resolved.info.sample_rate
+            if backend == "onnx":
+                runtime = build_runtime_model(resolved.onnx_path)
+                self._win_len = infer_win_len(runtime.session, self._model_sr)
+                self._runner = OnnxFrameRunner(runtime, self._win_len)
+            else:
+                from .openvino_backend import OpenVINOFrameRunner
+
+                self._runner = OpenVINOFrameRunner(resolved.onnx_path)
+                self._win_len = self._runner.win_len
         cfg = make_stft_config(self._win_len)
         self._hop_size: int = cfg.hop_size
         self._window: np.ndarray = cfg.window

@@ -18,8 +18,12 @@ import numpy as np
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="dpdfnet8_48khz_hr")
-    parser.add_argument("--onnx-path", type=Path, required=True)
-    parser.add_argument("--backend", choices=["onnx", "openvino"], default="onnx")
+    parser.add_argument("--onnx-path", type=Path)
+    parser.add_argument(
+        "--backend", choices=["onnx", "openvino", "native"], default="onnx"
+    )
+    parser.add_argument("--native-library", type=Path)
+    parser.add_argument("--native-weights", type=Path)
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--warmup-frames", type=int, default=100)
     parser.add_argument(
@@ -38,6 +42,11 @@ def main() -> None:
         "--save-output", type=Path, help="Save enhanced samples as a NumPy array"
     )
     args = parser.parse_args()
+    if args.backend == "native":
+        if not args.native_library or not args.native_weights or args.onnx_path:
+            parser.error("native needs --native-library and --native-weights, not --onnx-path")
+    elif not args.onnx_path or args.native_library or args.native_weights:
+        parser.error("onnx/openvino needs --onnx-path, not native paths")
     if args.seconds <= 0 or args.warmup_frames < 0:
         parser.error("--seconds must be positive and --warmup-frames non-negative")
     if args.cpu is not None:
@@ -69,9 +78,9 @@ def main() -> None:
         parser.error("Audio must contain more hops than --warmup-frames plus one")
 
     start = time.perf_counter_ns()
-    # Omitting the new keyword for ONNX lets the same benchmark measure the
-    # original package via PYTHONPATH, without changing its implementation.
     kwargs = {"backend": args.backend} if args.backend != "onnx" else {}
+    if args.backend == "native":
+        kwargs.update(native_library=args.native_library, native_weights=args.native_weights)
     enhancer = StreamEnhancer(model=args.model, onnx_path=args.onnx_path, **kwargs)
     setup_ms = (time.perf_counter_ns() - start) / 1e6
     timings = np.empty(blocks, dtype=np.float64)
@@ -99,13 +108,19 @@ def main() -> None:
         np.save(args.save_output, np.concatenate(output))
 
     measured = timings[args.warmup_frames :]
-    packages = {name: version(name) for name in ["numpy", "onnxruntime"]}
+    packages = {"numpy": version("numpy")}
+    if args.backend != "native":
+        packages["onnxruntime"] = version("onnxruntime")
     if args.backend == "openvino":
         packages["openvino"] = version("openvino")
     rss_scale = 1024**2 if platform.system() == "Darwin" else 1024
     report = {
         "model": args.model,
-        "model_sha256": hashlib.sha256(args.onnx_path.read_bytes()).hexdigest(),
+        "model_sha256": hashlib.sha256(
+            (
+                args.native_weights if args.backend == "native" else args.onnx_path
+            ).read_bytes()
+        ).hexdigest(),
         "backend": args.backend,
         "paced": args.paced,
         "sample_rate": sr,

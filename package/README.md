@@ -196,6 +196,27 @@ frame per inference. OpenVINO requires a platform supported by its
 [CPU runtime](https://docs.openvino.ai/2026/about-openvino/release-notes-openvino/system-requirements.html).
 It does not use a GPU or NPU and does not create a compiled-model disk cache.
 
+For the two 48 kHz HR models, you can also use the separately built
+[native W7A8 runtime](https://github.com/perennialtech/DPDFNet/tree/main/optimized_inference) through this streaming
+API. Build the C library first; this option does not load or download ONNX
+weights and uses quantized inference, so its output need not match float32.
+
+```python
+import dpdfnet
+
+enhancer = dpdfnet.StreamEnhancer(
+    model="dpdfnet2_48khz_hr",
+    backend="native",
+    native_library="optimized_inference/build/libdpdfnet.so",
+    native_weights="optimized_inference/models/dpdfnet2_48khz_hr/weights.f32",
+)
+```
+
+The existing microphone demo accepts `--backend native`, `--native-library`
+and `--native-weights`; so does `benchmarks/streaming.py` for comparable
+end-to-end callback timings. Native inference requires the CPU and build
+environment described in the [native build guide](https://github.com/perennialtech/DPDFNet/blob/main/optimized_inference/docs/BUILD.md).
+
 ```python
 import sounddevice as sd
 import dpdfnet

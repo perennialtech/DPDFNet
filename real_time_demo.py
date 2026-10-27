@@ -36,19 +36,36 @@ def align_signal_length(x: np.ndarray, target_len: int) -> np.ndarray:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Real-time CPU speech enhancement")
     parser.add_argument("--model", choices=supported_models(), default=MODEL_NAME)
-    parser.add_argument("--backend", choices=["onnx", "openvino"], default="onnx")
+    parser.add_argument(
+        "--backend", choices=["onnx", "openvino", "native"], default="onnx"
+    )
     parser.add_argument("--onnx-dir", type=Path, default=ONNX_DIR)
+    parser.add_argument("--native-library", type=Path)
+    parser.add_argument("--native-weights", type=Path)
     args = parser.parse_args(argv)
     # Must be set before creating ImageItem/plots so spectrogram arrays
     # shaped [freq, time] map to y=freq and x=time.
     pg.setConfigOptions(antialias=True, imageAxisOrder="row-major")
 
-    onnx_path = (args.onnx_dir / f"{args.model}.onnx").expanduser().resolve()
-    if not onnx_path.is_file():
+    native = args.backend == "native"
+    if native and (not args.native_library or not args.native_weights):
+        parser.error("native needs --native-library and --native-weights")
+    if not native and (args.native_library or args.native_weights):
+        parser.error("native paths require --backend native")
+    onnx_path = (
+        None
+        if native
+        else (args.onnx_dir / f"{args.model}.onnx").expanduser().resolve()
+    )
+    if onnx_path is not None and not onnx_path.is_file():
         raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
 
     enhancer = StreamEnhancer(
-        model=args.model, onnx_path=onnx_path, backend=args.backend
+        model=args.model,
+        onnx_path=onnx_path,
+        backend=args.backend,
+        native_library=args.native_library,
+        native_weights=args.native_weights,
     )
     sample_rate, hop_size = enhancer.sample_rate, enhancer.hop_size
     buffer_seconds = float(BUFFER_SECONDS)

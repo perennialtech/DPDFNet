@@ -32,6 +32,10 @@ jobs:
         working-directory: optimized_inference
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: matrix.pgo
+        with:
+          python-version: '3.12'
       - name: Check generated VNNI assembly
         run: python3 tools/generate_vnni.py --check
       - name: Verify both model weights
@@ -39,6 +43,11 @@ jobs:
       - name: Build recommended PGO release and run contracts
         if: matrix.pgo
         run: python3 tools/build.py --build-dir build/ci --jobs 2
+      - name: Test native Python streaming integration
+        if: matrix.pgo
+        run: |
+          python3 -m pip install -e '../package[test]'
+          DPDFNET_NATIVE_BUILD=build/ci python3 -m pytest -q ../package/tests/test_native_streaming.py
       - name: Configure static or sanitizer build
         if: '!matrix.pgo'
         run: cmake -S . -B build/ci ${{ matrix.config }} -DDPDF_PGO_MODE=OFF -DBUILD_TESTING=ON
