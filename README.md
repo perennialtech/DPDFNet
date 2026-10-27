@@ -55,6 +55,18 @@
 | dpdfnet2_48khz_hr | 2.58 | 2.42 | 11.6 | 10.0 |
 | dpdfnet8_48khz_hr | 3.63 | 7.17 | 18.7 | 14.2 |
 
+### Optimized native inference
+
+The [optimized C runtime](optimized_inference/README.md) supports
+`dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` with the final W7A8 kernels and
+FP32 recurrent state. It includes both model weights, a shared C API,
+assembly kernels, examples, contract tests and build documentation.
+
+The supported target is Linux x86-64 with AVX2/FMA and GCC, including WSL2.
+Inference uses one calling thread and requires no ONNX Runtime.
+See [performance and output quality](optimized_inference/docs/PERFORMANCE.md)
+for measurements and their scope; the 50 ms algorithmic delay is unchanged.
+
 ## Install the PyPI Package
 
 For CPU-only ONNX inference using the packaged CLI and Python API:
