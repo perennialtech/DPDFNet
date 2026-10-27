@@ -9,8 +9,6 @@ struct dpdf_block {
     float eps[2];
     dpdf_qmatrix *q[8];
     float params[1536]; /* Bias and normalization parameters remain FP32. */
-    dpdf_gates_fn gates;
-    dpdf_norm_fn norm;
 };
 
 int dpdf_has_avx2(void) {
@@ -28,7 +26,6 @@ dpdf_block *dpdf_create_int8(int f,const float *w,size_t count,float e0,float e1
     dpdf_block *b=calloc(1,sizeof(*b));
     if (!b) return NULL;
     b->freq=f; b->eps[0]=e0; b->eps[1]=e1;
-    b->gates=dpdf_gates_avx2; b->norm=dpdf_norm_residual_avx2;
     memcpy(b->params,w+49152,768*sizeof(float));
     memcpy(b->params+768,w+58112,192*sizeof(float));
     memcpy(b->params+960,w+82880,384*sizeof(float));
@@ -84,18 +81,18 @@ int dpdf_process_layout(const dpdf_block *b, const float *input, const float *st
                 for (int c=0;c<192;++c) step[c]=0.0f+initial_bias[c];
             } else
                 affine(b, 2+direction, h, bias+direction*384+192, step, 1);
-            b->gates(intra[direction]+r*192, step, h, h, 1);
+            dpdf_gates_avx2(intra[direction]+r*192, step, h, h, 1);
             memcpy(bi+r*128+direction*64, h, sizeof(h));
         }
     }
     affine(b, 4, bi, fib, p, f);
-    b->norm(mid, p, features, nis, nib, b->eps[0], f);
+    dpdf_norm_residual_avx2(mid, p, features, nis, nib, b->eps[0], f);
     affine(b, 5, mid, tib, a, f);
     affine(b, 6, state, thb, hproj, f);
-    b->gates(a, hproj, state, state_out, f);
+    dpdf_gates_avx2(a, hproj, state, state_out, f);
     affine(b, 7, state_out, fob, p, f);
     float *final=(layout_flags & DPDF_OUTPUT_FREQ_MAJOR)?output:x;
-    b->norm(final, p, mid, nos, nob, b->eps[1], f);
+    dpdf_norm_residual_avx2(final, p, mid, nos, nob, b->eps[1], f);
     if (!(layout_flags & DPDF_OUTPUT_FREQ_MAJOR)) {
 #if DPDF_MODEL_SIZE == 2
         dpdf_transpose_avx2(x,output,f,64);

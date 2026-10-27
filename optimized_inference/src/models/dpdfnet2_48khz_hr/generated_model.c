@@ -11,7 +11,6 @@ struct dpdf_model {
     dpdf_block *blocks[4];
  dpdf_dense *dense[219];
  dpdf_convop *conv[21];
-    dpdf_transpose_fn transpose;
 };
 const char *dpdf_model_weights_sha256(void) { return "cb7248b8fccbff7b32f254ec2ed0061e604514b2ccd98d997cd081a876424e7b"; }
 size_t dpdf_model_weight_count(void) { return 2582444; }
@@ -55,7 +54,6 @@ memcpy(m->weights+6632,w+232456,1*sizeof(float));
 memcpy(m->weights+6640,w+232464,1*sizeof(float));
 memcpy(m->weights+6648,w+232472,481*sizeof(float));
 memcpy(m->weights+7136,w+232960,1*sizeof(float));
-    m->transpose=dpdf_transpose_avx2;
 m->blocks[0]=dpdf_create_int8(40,(w+245256),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[0]) { dpdf_model_destroy(m); return NULL; }
 m->blocks[1]=dpdf_create_int8(40,(w+332808),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[1]) { dpdf_model_destroy(m); return NULL; }
 m->blocks[2]=dpdf_create_int8(48,(w+428552),DPDF_WEIGHT_FLOATS,9.99999975e-06f,9.99999975e-06f); if (!m->blocks[2]) { dpdf_model_destroy(m); return NULL; }
@@ -398,25 +396,25 @@ for (int i=0;i<30720;++i) (m->arena+38512)[i]=((m->arena+7792)[i]>0?(m->arena+77
 /* 48: Conv /model/enc/erb_conv1/erb_conv1.0/Conv */
 dpdf_convop_run(m->conv[1],(m->arena+38512),(m->arena+4896));
 /* 49: Conv /model/enc/erb_conv1/erb_conv1.1/Conv */
-m->transpose((m->arena+4896),(m->arena+25376),64,160);
+dpdf_transpose_avx2((m->arena+4896),(m->arena+25376),64,160);
 dpdf_dense_run(m->dense[0],(m->arena+25376),(m->arena+69232),160);
-m->transpose((m->arena+69232),(m->arena+15136),160,64);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),160,64);
 /* 50: Relu /model/enc/erb_conv1/erb_conv1.3/Relu */
 for (int i=0;i<10240;++i) (m->arena+4896)[i]=((m->arena+15136)[i]>0?(m->arena+15136)[i]:0.0f);
 /* 51: Conv /model/enc/erb_conv2/erb_conv2.0/Conv */
 dpdf_convop_run(m->conv[2],(m->arena+4896),(m->arena+69232));
 /* 52: Conv /model/enc/erb_conv2/erb_conv2.1/Conv */
-m->transpose((m->arena+69232),(m->arena+15136),64,80);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),64,80);
 dpdf_dense_run(m->dense[1],(m->arena+15136),(m->arena+20256),80);
-m->transpose((m->arena+20256),(m->arena+74352),80,64);
+dpdf_transpose_avx2((m->arena+20256),(m->arena+74352),80,64);
 /* 53: Relu /model/enc/erb_conv2/erb_conv2.3/Relu */
 for (int i=0;i<5120;++i) (m->arena+69232)[i]=((m->arena+74352)[i]>0?(m->arena+74352)[i]:0.0f);
 /* 54: Conv /model/enc/erb_conv3/erb_conv3.0/Conv */
 dpdf_convop_run(m->conv[3],(m->arena+69232),(m->arena+74352));
 /* 55: Conv /model/enc/erb_conv3/erb_conv3.1/Conv */
-m->transpose((m->arena+74352),(m->arena+15136),64,40);
+dpdf_transpose_avx2((m->arena+74352),(m->arena+15136),64,40);
 dpdf_dense_run(m->dense[2],(m->arena+15136),(m->arena+17696),40);
-m->transpose((m->arena+17696),(m->arena+76912),40,64);
+dpdf_transpose_avx2((m->arena+17696),(m->arena+76912),40,64);
 /* 56: Relu /model/enc/erb_conv3/erb_conv3.3/Relu */
 for (int i=0;i<2560;++i) (m->arena+74352)[i]=((m->arena+76912)[i]>0?(m->arena+76912)[i]:0.0f);
 /* 57: Slice /model/enc/dprnn_erb/blocks.0/inter_gru/Slice */
@@ -447,17 +445,17 @@ dpdf_convop_run(m->conv[5],((m->arena+2144)+288),(m->arena+25888));
 for (int b=0;b<1;++b) memcpy((m->arena+28960)+b*6144+0,(m->arena+22816)+b*3072,3072*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+28960)+b*6144+3072,(m->arena+25888)+b*3072,3072*sizeof(float));
 /* 74: Conv /model/enc/df_conv0/df_conv0.2/Conv */
-m->transpose((m->arena+28960),(m->arena+79472),64,96);
+dpdf_transpose_avx2((m->arena+28960),(m->arena+79472),64,96);
 dpdf_dense_run(m->dense[3],(m->arena+79472),(m->arena+85616),96);
-m->transpose((m->arena+85616),(m->arena+22816),96,64);
+dpdf_transpose_avx2((m->arena+85616),(m->arena+22816),96,64);
 /* 75: Relu /model/enc/df_conv0/df_conv0.4/Relu */
 for (int i=0;i<6144;++i) (m->arena+28960)[i]=((m->arena+22816)[i]>0?(m->arena+22816)[i]:0.0f);
 /* 76: Conv /model/enc/df_conv1/df_conv1.0/Conv */
 dpdf_convop_run(m->conv[6],(m->arena+28960),(m->arena+35104));
 /* 77: Conv /model/enc/df_conv1/df_conv1.1/Conv */
-m->transpose((m->arena+35104),(m->arena+25888),64,48);
+dpdf_transpose_avx2((m->arena+35104),(m->arena+25888),64,48);
 dpdf_dense_run(m->dense[4],(m->arena+25888),(m->arena+76912),48);
-m->transpose((m->arena+76912),(m->arena+22816),48,64);
+dpdf_transpose_avx2((m->arena+76912),(m->arena+22816),48,64);
 /* 78: Relu /model/enc/df_conv1/df_conv1.3/Relu */
 for (int i=0;i<3072;++i) (m->arena+25888)[i]=((m->arena+22816)[i]>0?(m->arena+22816)[i]:0.0f);
 /* 79: Slice /model/enc/dprnn_df/blocks.0/inter_gru/Slice */
@@ -596,9 +594,9 @@ for (int b=0;b<1;++b) memcpy((m->arena+79984)+b*5120+2560,(m->arena+25376)+b*256
 for (int t1=0;t1<64;++t1) for (int t3=0;t3<40;++t3) for (int t4=0;t4<2;++t4) (m->arena+22816)[t1*80+t3*2+t4*1]=(m->arena+79984)[t1*40+t3*1+t4*2560];
 /* 198: Reshape /model/erb_dec/convt3/convt3.0/Reshape_1 */
 /* 199: Conv /model/erb_dec/convt3/convt3.1/Conv */
-m->transpose((m->arena+22816),(m->arena+85104),64,80);
+dpdf_transpose_avx2((m->arena+22816),(m->arena+85104),64,80);
 dpdf_dense_run(m->dense[171],(m->arena+85104),(m->arena+91760),80);
-m->transpose((m->arena+91760),(m->arena+79984),80,64);
+dpdf_transpose_avx2((m->arena+91760),(m->arena+79984),80,64);
 /* 200: Relu /model/erb_dec/convt3/convt3.3/Relu */
 for (int i=0;i<5120;++i) (m->arena+22816)[i]=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f);
 /* 201: Conv /model/erb_dec/conv2p/conv2p.0/Conv */
@@ -619,9 +617,9 @@ for (int b=0;b<1;++b) memcpy((m->arena+79984)+b*10240+5120,(m->arena+69232)+b*51
 for (int t1=0;t1<64;++t1) for (int t3=0;t3<80;++t3) for (int t4=0;t4<2;++t4) (m->arena+96880)[t1*160+t3*2+t4*1]=(m->arena+79984)[t1*80+t3*1+t4*5120];
 /* 209: Reshape /model/erb_dec/convt2/convt2.0/Reshape_1 */
 /* 210: Conv /model/erb_dec/convt2/convt2.1/Conv */
-m->transpose((m->arena+96880),(m->arena+107120),64,160);
+dpdf_transpose_avx2((m->arena+96880),(m->arena+107120),64,160);
 dpdf_dense_run(m->dense[172],(m->arena+107120),(m->arena+117360),160);
-m->transpose((m->arena+117360),(m->arena+79984),160,64);
+dpdf_transpose_avx2((m->arena+117360),(m->arena+79984),160,64);
 /* 211: Relu /model/erb_dec/convt2/convt2.3/Relu */
 for (int i=0;i<10240;++i) (m->arena+90224)[i]=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f);
 /* 212: Conv /model/erb_dec/conv1p/conv1p.0/Conv */
@@ -645,9 +643,9 @@ for (int b=0;b<1;++b) memcpy((m->arena+127600)+b*30720+20480,(m->arena+100464)+b
 for (int t1=0;t1<64;++t1) for (int t3=0;t3<160;++t3) for (int t4=0;t4<3;++t4) (m->arena+79984)[t1*480+t3*3+t4*1]=(m->arena+127600)[t1*160+t3*1+t4*10240];
 /* 221: Reshape /model/erb_dec/convt1/convt1.0/Reshape_1 */
 /* 222: Conv /model/erb_dec/convt1/convt1.1/Conv */
-m->transpose((m->arena+79984),(m->arena+158320),64,480);
+dpdf_transpose_avx2((m->arena+79984),(m->arena+158320),64,480);
 dpdf_dense_run(m->dense[173],(m->arena+158320),(m->arena+189040),480);
-m->transpose((m->arena+189040),(m->arena+110704),480,64);
+dpdf_transpose_avx2((m->arena+189040),(m->arena+110704),480,64);
 /* 223: Relu /model/erb_dec/convt1/convt1.3/Relu */
 for (int i=0;i<30720;++i) (m->arena+79984)[i]=((m->arena+110704)[i]>0?(m->arena+110704)[i]:0.0f);
 /* 224: Conv /model/erb_dec/conv0p/conv0p.0/Conv */
@@ -722,9 +720,9 @@ dpdf_convop_run(m->conv[20],((m->arena+79984)+15360),(m->arena+2144));
 for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+0,(m->arena+17952)+b*480,480*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+480,(m->arena+2144)+b*480,480*sizeof(float));
 /* 289: Conv /model/df_dec/df_convp/df_convp.2/Conv */
-m->transpose((m->arena+69152),(m->arena+71072),10,96);
+dpdf_transpose_avx2((m->arena+69152),(m->arena+71072),10,96);
 dpdf_dense_run(m->dense[202],(m->arena+71072),(m->arena+72032),96);
-m->transpose((m->arena+72032),(m->arena+70112),96,10);
+dpdf_transpose_avx2((m->arena+72032),(m->arena+70112),96,10);
 /* 290: Relu /model/df_dec/df_convp/df_convp.4/Relu */
 for (int i=0;i<960;++i) (m->arena+69152)[i]=((m->arena+70112)[i]>0?(m->arena+70112)[i]:0.0f);
 /* 291: Transpose /model/df_dec/Transpose */

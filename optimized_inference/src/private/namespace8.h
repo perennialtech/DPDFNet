@@ -22,7 +22,6 @@
 #define dpdf_dprnn dpdfnet8_private_dprnn
 #define dpdf_full dpdfnet8_private_full
 #define dpdf_gates_avx2 dpdfnet8_private_gates_avx2
-#define dpdf_gates_fn dpdfnet8_private_gates_fn
 #define dpdf_generated_gru256_fused dpdfnet8_private_generated_gru256_fused
 #define dpdf_has_avx2 dpdfnet8_private_has_avx2
 #define dpdf_model dpdfnet8_private_model
@@ -36,7 +35,6 @@
 #define dpdf_model_weight_count dpdfnet8_private_model_weight_count
 #define dpdf_model_weights_sha256 dpdfnet8_private_model_weights_sha256
 #define dpdf_native_model dpdfnet8_private_native_model
-#define dpdf_norm_fn dpdfnet8_private_norm_fn
 #define dpdf_norm_residual_avx2 dpdfnet8_private_norm_residual_avx2
 #define dpdf_norm_residual_four_avx2 dpdfnet8_private_norm_residual_four_avx2
 #define dpdf_process_layout dpdfnet8_private_process_layout
