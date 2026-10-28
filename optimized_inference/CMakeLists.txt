@@ -59,26 +59,26 @@ foreach(size IN ITEMS 2 8)
     src/common/dpdf_dprnn.c src/common/avx2.c src/common/int8.c
     src/common/extended_ops.c
     src/common/qdot64_fixed_avx2.S src/common/qdot4pair_fixed_avx2.S
+    src/common/qaffine4pair64_fused_avx2.S
     ${model_dir}/qaffine64_fused_avx2.S)
   target_include_directories(backend${size} PRIVATE include src src/private)
   target_compile_definitions(backend${size} PRIVATE DPDF_MODEL_SIZE=${size}
-    DPDF_X86_DISPATCH DPDF_QASM64 DPDF_QFUSED64 DPDF_QPAIR_FIXED)
+    DPDF_X86_DISPATCH DPDF_QASM64 DPDF_QFUSED64 DPDF_QPAIR_FIXED DPDF_QPAIR_FUSED64)
   target_compile_options(backend${size} PRIVATE
     -include "${CMAKE_CURRENT_SOURCE_DIR}/src/private/namespace${size}.h"
     $<$<COMPILE_LANGUAGE:C>:-fvisibility=hidden>)
   if(size EQUAL 2)
-    target_sources(backend2 PRIVATE ${model_dir}/qaffine256_fused_avx2.S
-      ${model_dir}/qaffine4pair64_fused_avx2.S)
-    target_compile_definitions(backend2 PRIVATE DPDF_QFUSED256 DPDF_QPAIR_FUSED64)
+    target_sources(backend2 PRIVATE ${model_dir}/qaffine256_fused_avx2.S)
+    target_compile_definitions(backend2 PRIVATE DPDF_QFUSED256)
   endif()
   if(DPDF_ENABLE_AVX_VNNI AND DPDF_COMPILER_HAS_AVX_VNNI)
     target_compile_definitions(backend${size} PRIVATE DPDF_HAS_AVX_VNNI)
     target_sources(backend${size} PRIVATE src/common/int8_vnni.c
       src/common/qdot64_fixed_vnni.S src/common/qdot4pair_fixed_vnni.S
+      src/common/qaffine4pair64_fused_vnni.S
       ${model_dir}/qaffine64_fused_vnni.S)
     if(size EQUAL 2)
-      target_sources(backend2 PRIVATE ${model_dir}/qaffine256_fused_vnni.S
-        ${model_dir}/qaffine4pair64_fused_vnni.S)
+      target_sources(backend2 PRIVATE ${model_dir}/qaffine256_fused_vnni.S)
     endif()
   endif()
   dpdf_compile(backend${size})
@@ -138,21 +138,28 @@ if(BUILD_TESTING)
       add_test(NAME ${target} COMMAND ${target} "${CMAKE_CURRENT_SOURCE_DIR}/models/dpdfnet${size}_48khz_hr/weights.f32")
     endforeach()
   endforeach()
-  foreach(test IN ITEMS wide_contract pair_fused_contract)
-    add_executable(model2_${test} tests/${test}.c $<TARGET_OBJECTS:backend2>)
-    target_include_directories(model2_${test} PRIVATE include src src/private)
-    target_compile_options(model2_${test} PRIVATE
-      -include "${CMAKE_CURRENT_SOURCE_DIR}/src/private/namespace2.h" -frounding-math -fno-tree-vectorize)
-    target_link_libraries(model2_${test} PRIVATE m)
-    dpdf_compile(model2_${test})
-    add_test(NAME model2_${test} COMMAND model2_${test})
+  foreach(size IN ITEMS 2 8)
+    set(assembly_contracts pair_fused_contract)
+    if(size EQUAL 2)
+      list(APPEND assembly_contracts wide_contract)
+    endif()
+    foreach(test IN LISTS assembly_contracts)
+      set(target "model${size}_${test}")
+      add_executable(${target} tests/${test}.c $<TARGET_OBJECTS:backend${size}>)
+      target_include_directories(${target} PRIVATE include src src/private)
+      target_compile_options(${target} PRIVATE
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/src/private/namespace${size}.h" -frounding-math -fno-tree-vectorize)
+      target_link_libraries(${target} PRIVATE m)
+      dpdf_compile(${target})
+      add_test(NAME ${target} COMMAND ${target})
+    endforeach()
   endforeach()
   # Reuse the guarded scalar assembly oracles for each VNNI specialization.
   if(DPDF_ENABLE_AVX_VNNI AND DPDF_COMPILER_HAS_AVX_VNNI)
     foreach(size IN ITEMS 2 8)
-      set(vnni_contracts fused_contract pair_contract)
+      set(vnni_contracts fused_contract pair_contract pair_fused_contract)
       if(size EQUAL 2)
-        list(APPEND vnni_contracts wide_contract pair_fused_contract)
+        list(APPEND vnni_contracts wide_contract)
       endif()
       foreach(test IN LISTS vnni_contracts)
         set(target "model${size}_${test}_vnni")
