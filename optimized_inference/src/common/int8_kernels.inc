@@ -252,9 +252,10 @@ static __attribute__((noinline)) void qdot4pair(const int8_t *activation,
     qdot4pair_generic(activation,packed0,packed1,k,out);
 }
 
-#if DPDF_MODEL_SIZE == 2
-
-#ifdef DPDF_QPAIR_FUSED64
+/* Model 8 retains the faster original tiled reduction for AVX2-only CPUs.
+ * The shared fused four-row kernel is selected there only for AVX-VNNI.
+ * Model 2 keeps its validated fused path for both ISA variants. */
+#if defined(DPDF_QPAIR_FUSED64) && (DPDF_MODEL_SIZE == 2 || defined(DPDF_INT8_VNNI))
 #include "pair_fused_args.h"
 static inline __attribute__((always_inline)) void qpair_fused4(
         const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,const int8_t *activation,
@@ -270,9 +271,6 @@ static inline __attribute__((always_inline)) void qpair_fused4(
     dpdf_qaffine4pair64_fused_avx2(&args);
 }
 #endif
-
-#else
-#endif
 static void qaffine_batch_tiled(const dpdf_qmatrix *q,const float *x,const float *bias,float *y,int m) {
     int8_t activation[48*512]; float scales[48]; int zp[48];
     const int k=q->k,n=q->n;
@@ -282,16 +280,16 @@ static void qaffine_batch_tiled(const dpdf_qmatrix *q,const float *x,const float
     } else {
         for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
     }
-#ifdef DPDF_QPAIR_FUSED64
+#else
+    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
+#endif
+#if defined(DPDF_QPAIR_FUSED64) && (DPDF_MODEL_SIZE == 2 || defined(DPDF_INT8_VNNI))
     if (k==64) {
         for (int r=0;r<m;r+=4) for (int c=0;c<n;c+=16)
             qpair_fused4(q,q,activation+r*64,scales+r,zp+r,bias,bias,
                          y+r*n,y+r*n,c,c+8);
         return;
     }
-#endif
-#else
-    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
 #endif
     for (int r=0;r<m;r+=4) for (int c=0;c<n;c+=16) {
         __m256i sums[8];
@@ -425,16 +423,16 @@ void DPDF_QPAIR_IMPL(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,const float *
     } else {
         for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
     }
-#ifdef DPDF_QPAIR_FUSED64
+#else
+    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
+#endif
+#if defined(DPDF_QPAIR_FUSED64) && (DPDF_MODEL_SIZE == 2 || defined(DPDF_INT8_VNNI))
     if (k==64) {
         for (int r=0;r<m;r+=4) for (int c=0;c<n;c+=8)
             qpair_fused4(q0,q1,activation+r*64,scales+r,zp+r,bias0,bias1,
                          y0+r*n,y1+r*n,c,c);
         return;
     }
-#endif
-#else
-    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
 #endif
     for (int r=0;r<m;r+=4) for (int c=0;c<n;c+=8) {
         __m256i sums[8];
