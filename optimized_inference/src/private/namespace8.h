@@ -24,6 +24,7 @@
 #define dpdf_full dpdfnet8_private_full
 #define dpdf_gates_avx2 dpdfnet8_private_gates_avx2
 #define dpdf_generated_gru256_fused dpdfnet8_private_generated_gru256_fused
+#define dpdf_generated_gru256_exact_avx2 dpdfnet8_private_generated_gru256_exact_avx2
 #define dpdf_has_avx2 dpdfnet8_private_has_avx2
 #define dpdf_model dpdfnet8_private_model
 #define dpdf_model_arena_bytes dpdfnet8_private_model_arena_bytes

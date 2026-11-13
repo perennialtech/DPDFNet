@@ -52,11 +52,7 @@ void dpdf_conv(dpdf_axpy_fn axpy, const float *x, const float *w, const float *b
  * a/b: three disjoint contiguous 256-wide gates. out may equal old, a gate
  * slice or a b gate slice; other partial overlap is outside this contract.
  * Exception trap order is not promised; no fast-math/reassociation or FMA. */
-#if DPDF_MODEL_SIZE == 2
 static void dpdf_generated_gru256_scalar(const float *a,const float *b,
-#else
-void dpdf_generated_gru256_fused(const float *a,const float *b,
-#endif
                                const float *old,float *out) {
     for (int i=0;i<256;++i) {
         float reset_sum=b[i]+a[i];
@@ -71,7 +67,6 @@ void dpdf_generated_gru256_fused(const float *a,const float *b,
         out[i]=update_product+candidate;
     }
 }
-#if DPDF_MODEL_SIZE == 2
 
 void dpdf_generated_gru256_fused(const float *a,const float *b,
                                const float *old,float *out) {
@@ -83,5 +78,3 @@ void dpdf_generated_gru256_fused(const float *a,const float *b,
 #endif
     dpdf_generated_gru256_scalar(a,b,old,out);
 }
-#else
-#endif

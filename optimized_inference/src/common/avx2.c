@@ -376,8 +376,6 @@ int dpdf_conv_row_pair_avx2(const float *x,const float *w,const float *bias,floa
     }
     return 1;
 }
-#if DPDF_MODEL_SIZE == 2
-
 /* exact surrounding arithmetic; nonlinear calls remain scalar libm.
  * Each eight-lane group consumes every A/B gate slice before output writes.
  * Separate add/mul/div/sub intrinsics preserve FP32 rounding and no FMA. */
@@ -404,5 +402,3 @@ void dpdf_generated_gru256_exact_avx2(const float *a,const float *b,
         _mm256_storeu_ps(out+i,_mm256_add_ps(update_product,value));
     }
 }
-#else
-#endif
