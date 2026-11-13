@@ -19,9 +19,23 @@ transposes. Matrix tiles use packed 32-byte operands; kernels specialize the
 fixed graph's common 64-input projections. Model 2 uses fused four-row
 paired projections on both AVX2 and AVX-VNNI; model 8 uses them on AVX-VNNI
 only (its original AVX2 tiled reduction benchmarks faster). Model 2 also
-uses a 256-input assembly projection and AVX2 arithmetic surrounding unchanged
-scalar libm calls in its generated GRU cells. Model 8 retains its accepted
-fixed-row kernels and compiler profile.
+uses a 256-input assembly projection. Both models use AVX2 arithmetic
+surrounding unchanged scalar libm calls in their generated GRU cells, and share
+one recurrent 64-to-192 row kernel with twelve independent accumulators per
+pass, enough to hide AVX-VNNI dot-product latency. The intra-frequency GRU
+steps both directions together, so each direction's quantization and gates
+overlap the other's dot products. Model 8 retains its compiler profile.
+
+The 64-channel pointwise convolutions stay channel-major. One kernel quantizes
+each position across its 64 inputs, broadcasts packed weights into the integer
+dot products and writes the activated channel-major result, so no layout
+transposes surround it; the decoder's transposed-convolution pieces are
+interleaved while quantizing. Per position, its quantization, integer sums and
+FP32 epilogue are those of the row-major path, which `pointwise_contract`
+checks bit for bit. Its inner loops are inline assembly because GCC spills the
+sixteen-register AVX-VNNI block. Batch quantization finds every row's range
+before deriving parameters eight rows at a time, so the serial range and
+division chain of one row does not stall the next.
 
 Model-specific choices in shared C sources are selected by the private
 `DPDF_MODEL_SIZE` compile definition. These branches preserve the accepted
@@ -39,6 +53,11 @@ or change quantization rounding without new numerical and audio evidence.
 - `src/models/*/generated_model.c` contains explicit fixed graph operations,
   weight offsets, state layout, and normalization seeds. These files belong to
   the supplied model/weight hashes; they are not a general ONNX interpreter.
+  They are maintained here by hand; no generator is in this repository. A
+  regenerated graph must reapply the direct state writes, channel-major
+  pointwise convolutions and fused ReLUs. Because state is written as soon as
+  its last read is done, a mid-graph `-1` (not reachable with these fixed
+  shapes) would leave the state partly updated.
 - `private/` holds kernel declarations and namespace mappings. These headers
   are not installed and do not define a consumer ABI.
 

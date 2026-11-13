@@ -1,4 +1,4 @@
-/* Independent scalar integer and FP32 oracle for fused K64 row assembly.
+/* Independent scalar integer and FP32 oracle for the fused K64x192 row assembly.
  * mmap guards, read-only source pages, all caller rounding/FTZ/DAZ controls.
  * This direct contract links the generated .S; no model runtime is involved. */
 #define _GNU_SOURCE
@@ -18,7 +18,7 @@
 #endif
 
 void dpdf_qaffine64_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
-        const float *,const float *,float *,float,int,int);
+        const float *,const float *,float *,float,int);
 #define CHECK(value) do { if (!(value)) { fprintf(stderr,"Fused contract line %d\n",__LINE__); return 1; } } while (0)
 
 typedef struct {
@@ -130,8 +130,8 @@ int main(void) {
         CHECK(fesetround(modes[rounding])==0);
         _mm_setcsr((_mm_getcsr()&~0x8040u)|(denorm?0x8040u:0u));
         unsigned controls=_mm_getcsr()&0xffc0u;
-        for (int tiles=1;tiles<=3;tiles+=2) {
-            int n=tiles*64;
+        {
+            const int n=192;
             for (int placement=0;placement<3;++placement) {
                 region buffers[6]={{0}};
                 const size_t lengths[]={64,(size_t)64*n,(size_t)n*4,(size_t)n*4,(size_t)n*4,(size_t)n*4};
@@ -157,14 +157,14 @@ int main(void) {
                     dpdf_qaffine64_fused_avx2((const int8_t *)buffers[0].payload,
                             (const int8_t *)buffers[1].payload,(const int32_t *)buffers[2].payload,
                             (const float *)buffers[3].payload,(const float *)buffers[4].payload,
-                            (float *)buffers[5].payload,activation_scale,zp,tiles);
+                            (float *)buffers[5].payload,activation_scale,zp);
                     if (memcmp(buffers[5].payload,expected,(size_t)n*4)) {
                         const unsigned char *actual=buffers[5].payload;
                         for (int c=0;c<n;++c) if (memcmp(actual+c*4,expected+c,4)) {
                             uint32_t actual_bits,expected_bits;
                             memcpy(&actual_bits,actual+c*4,4); memcpy(&expected_bits,expected+c,4);
-                            fprintf(stderr,"round=%d ftz_daz=%d tiles=%d placement=%d pattern=%d col=%d bits=%08x/%08x\n",
-                                    rounding,denorm,tiles,placement,pattern,c,actual_bits,expected_bits);
+                            fprintf(stderr,"round=%d ftz_daz=%d placement=%d pattern=%d col=%d bits=%08x/%08x\n",
+                                    rounding,denorm,placement,pattern,c,actual_bits,expected_bits);
                             return 1;
                         }
                     }
@@ -179,7 +179,7 @@ int main(void) {
     }
     CHECK(fesetenv(&saved)==0); _mm_setcsr(original_mxcsr);
     printf("{\"passed\":true,\"calls_checked\":%d,\"float_outputs_checked\":%d,"
-           "\"rounding_modes\":4,\"ftz_daz_modes\":2,\"tiles\":[1,3],"
+           "\"rounding_modes\":4,\"ftz_daz_modes\":2,\"outputs\":192,"
            "\"guarded_placements\":3,\"patterns_per_placement\":32,"
            "\"input_pages_read_only\":true,\"padding_canaries\":true,"
            "\"caller_controls_preserved\":true,\"separate_fp32_scale_product\":true}\n",calls,outputs);

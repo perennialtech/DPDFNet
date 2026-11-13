@@ -17,6 +17,7 @@
 #define dpdf_dense_create dpdfnet2_private_dense_create
 #define dpdf_dense_destroy dpdfnet2_private_dense_destroy
 #define dpdf_dense_run dpdfnet2_private_dense_run
+#define dpdf_dense_cm_run dpdfnet2_private_dense_cm_run
 #define dpdf_depthwise_stride_avx2 dpdfnet2_private_depthwise_stride_avx2
 #define dpdf_destroy dpdfnet2_private_destroy
 #define dpdf_dprnn dpdfnet2_private_dprnn
@@ -38,7 +39,6 @@
 #define dpdf_model_weights_sha256 dpdfnet2_private_model_weights_sha256
 #define dpdf_native_model dpdfnet2_private_native_model
 #define dpdf_norm_residual_avx2 dpdfnet2_private_norm_residual_avx2
-#define dpdf_norm_residual_four_avx2 dpdfnet2_private_norm_residual_four_avx2
 #define dpdf_pair_fused_args dpdfnet2_private_pair_fused_args
 #define dpdf_process_layout dpdfnet2_private_process_layout
 #define dpdf_qaffine dpdfnet2_private_qaffine
@@ -46,6 +46,8 @@
 #define dpdf_qaffine4pair64_fused_avx2 dpdfnet2_private_qaffine4pair64_fused_avx2
 #define dpdf_qaffine64_fused_avx2 dpdfnet2_private_qaffine64_fused_avx2
 #define dpdf_qaffine_pair dpdfnet2_private_qaffine_pair
+#define dpdf_qaffine_cm dpdfnet2_private_qaffine_cm
+#define dpdf_qrecur dpdfnet2_private_qrecur
 #define dpdf_qbytes dpdfnet2_private_qbytes
 #define dpdf_qcreate dpdfnet2_private_qcreate
 #define dpdf_qdestroy dpdfnet2_private_qdestroy
@@ -55,18 +57,22 @@
 #define dpdf_qmatrix dpdfnet2_private_qmatrix
 #define dpdf_transpose_avx2 dpdfnet2_private_transpose_avx2
 #define dpdf_transpose_fn dpdfnet2_private_transpose_fn
-#define dpdf_transpose_relu_avx2 dpdfnet2_private_transpose_relu_avx2
-#define dpdf_transpose_relu_scalar dpdfnet2_private_transpose_relu_scalar
 #define dpdf_transpose_scalar dpdfnet2_private_transpose_scalar
 
 /* Optional INT8 instruction variants; still private per model. */
 #define dpdf_has_avx_vnni dpdfnet2_private_has_avx_vnni
 #define dpdf_qaffine_avx2 dpdfnet2_private_qaffine_avx2
 #define dpdf_qaffine_pair_avx2 dpdfnet2_private_qaffine_pair_avx2
+#define dpdf_qaffine_cm_avx2 dpdfnet2_private_qaffine_cm_avx2
+#define dpdf_qrecur_avx2 dpdfnet2_private_qrecur_avx2
 #define dpdf_qaffine_vnni dpdfnet2_private_qaffine_vnni
 #define dpdf_qaffine_pair_vnni dpdfnet2_private_qaffine_pair_vnni
+#define dpdf_qaffine_cm_vnni dpdfnet2_private_qaffine_cm_vnni
+#define dpdf_qrecur_vnni dpdfnet2_private_qrecur_vnni
 #define dpdf_qaffine_impl dpdfnet2_private_qaffine_impl
 #define dpdf_qpair_impl dpdfnet2_private_qpair_impl
+#define dpdf_qcm_impl dpdfnet2_private_qcm_impl
+#define dpdf_qrecur_impl dpdfnet2_private_qrecur_impl
 #define dpdf_qdot64_fixed_vnni dpdfnet2_private_qdot64_fixed_vnni
 #define dpdf_qdot4pair64_vnni dpdfnet2_private_qdot4pair64_vnni
 #define dpdf_qdot4pair96_vnni dpdfnet2_private_qdot4pair96_vnni

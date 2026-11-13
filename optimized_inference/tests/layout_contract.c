@@ -46,10 +46,13 @@ static int conv_contract(void) {
     const int widths[]={1,7,8,9,16,17,40,48,65,80,96,160,480};
     int cases=0;
     for (size_t i=0;i<sizeof(widths)/sizeof(widths[0]);++i)
-      for (int pattern=0;pattern<3;++pattern) for (int kw=1;kw<=5;kw+=2) for (int sw=1;sw<=3;++sw) {
+      for (int pattern=0;pattern<5;++pattern) for (int kw=1;kw<=5;kw+=2) for (int sw=1;sw<=3;++sw) {
+        /* Patterns 1, 3 and 4 include the graph's fixed row-kernel shapes:
+         * depthwise, one-input 3x3 and 64-input 1xK. */
+        static const int shapes[5][4]={{3,2,1,3},{4,8,4,1},{3,2,1,3},{1,8,1,3},{64,1,1,1}};
         int wi=widths[i],pw=kw/2,wo=(wi+2*pw-kw)/sw+1;
-        int ci=pattern==1?4:3,co=pattern==1?8:2,group=pattern==1?4:1;
-        int kh=pattern==1?1:3,hi=kh+(pattern==2),ho=hi-kh+1;
+        int ci=shapes[pattern][0],co=shapes[pattern][1],group=shapes[pattern][2];
+        int kh=shapes[pattern][3],hi=kh+(pattern==2),ho=hi-kh+1;
         int nx=ci*hi*wi,nw=co*(ci/group)*kh*kw,ny=co*ho*wo;
         float *xa=malloc((nx+2)*4),*wa=malloc((nw+1)*4),*ya=malloc((ny+2)*4),*expected=malloc(ny*4);
         CHECK(xa && wa && ya && expected);
@@ -102,7 +105,7 @@ int main(void) {
             if (tier==1) continue;
 #endif
             dest[0]=12345; dest[n+1]=-12345;
-            transpose(x,y,rows,cols);
+            transpose(x,y,rows,cols,0);
             CHECK(dest[0]==12345 && dest[n+1]==-12345);
             for (int r=0;r<rows;++r) for (int c=0;c<cols;++c)
                 CHECK(!memcmp(y+c*rows+r,x+r*cols+c,4));

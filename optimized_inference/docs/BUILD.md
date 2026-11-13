@@ -122,8 +122,8 @@ matrix selects its implementation during creation, using GCC's CPU feature
 query. The audio callback performs no feature detection or allocation. Only
 `int8_vnni.c` and the corresponding assembly require AVX-VNNI; no global
 `-march=native`, AVX-512, or model format change is needed. Initialization adds
-two private function pointers per quantized matrix (4,016 bytes for model 2 and
-5,552 bytes for model 8 on x86-64). The public ABI is unchanged.
+four private function pointers per quantized matrix (8,032 bytes for model 2 and
+11,104 bytes for model 8 on x86-64). The public ABI is unchanged.
 
 The generated VNNI assembly keeps the addressing, floating-point instruction
 order, and ABI of the AVX2 assembly. Regenerate it after editing those sources:

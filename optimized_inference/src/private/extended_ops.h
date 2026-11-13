@@ -8,6 +8,11 @@ typedef struct dpdf_convop dpdf_convop;
 dpdf_dense *dpdf_dense_create(const float *,const float *,int,int,int);
 void dpdf_dense_destroy(dpdf_dense *);
 void dpdf_dense_run(dpdf_dense *,const float *,float *,int);
+/* Pointwise convolution without layout passes: count (1-3) channel-major
+ * [64][width] pieces -> [64][count*width], position t*count+j from column t
+ * of piece j, optional ReLU. K=N=64 and width%8==0 only; -1 otherwise.
+ * Every input is quantized before y is written, so y may overlap the pieces. */
+int dpdf_dense_cm_run(dpdf_dense *,const float *const *,int,int,float *,int);
 size_t dpdf_dense_bytes(const dpdf_dense *);
 dpdf_convop *dpdf_convop_create(const float *,const float *,int,int,int,int,int,int,int,int,int,int,int,int,int);
 void dpdf_convop_destroy(dpdf_convop *);

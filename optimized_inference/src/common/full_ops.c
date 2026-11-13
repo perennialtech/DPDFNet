@@ -2,10 +2,12 @@
 #include <math.h>
 
 /* Disjoint row-major input/output, including arbitrary edge dimensions. */
-void dpdf_transpose_scalar(const float *x,float *y,int rows,int cols) {
+void dpdf_transpose_scalar(const float *x,float *y,int rows,int cols,int relu) {
     for (int r=0;r<rows;r+=8) for (int c=0;c<cols;c+=8)
-        for (int i=r;i<r+8 && i<rows;++i) for (int j=c;j<c+8 && j<cols;++j)
-            y[j*rows+i]=x[i*cols+j];
+        for (int i=r;i<r+8 && i<rows;++i) for (int j=c;j<c+8 && j<cols;++j) {
+            float v=x[i*cols+j];
+            y[j*rows+i]=relu ? (v>0?v:0.0f) : v;
+        }
 }
 
 void dpdf_axpy_scalar(float *y, const float *x, float a, int n) {
@@ -50,11 +52,7 @@ void dpdf_conv(dpdf_axpy_fn axpy, const float *x, const float *w, const float *b
  * a/b: three disjoint contiguous 256-wide gates. out may equal old, a gate
  * slice or a b gate slice; other partial overlap is outside this contract.
  * Exception trap order is not promised; no fast-math/reassociation or FMA. */
-#if DPDF_MODEL_SIZE == 2
 static void dpdf_generated_gru256_scalar(const float *a,const float *b,
-#else
-void dpdf_generated_gru256_fused(const float *a,const float *b,
-#endif
                                const float *old,float *out) {
     for (int i=0;i<256;++i) {
         float reset_sum=b[i]+a[i];
@@ -69,7 +67,6 @@ void dpdf_generated_gru256_fused(const float *a,const float *b,
         out[i]=update_product+candidate;
     }
 }
-#if DPDF_MODEL_SIZE == 2
 
 void dpdf_generated_gru256_fused(const float *a,const float *b,
                                const float *old,float *out) {
@@ -81,5 +78,3 @@ void dpdf_generated_gru256_fused(const float *a,const float *b,
 #endif
     dpdf_generated_gru256_scalar(a,b,old,out);
 }
-#else
-#endif

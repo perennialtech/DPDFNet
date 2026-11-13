@@ -58,33 +58,18 @@ int dpdf_process_layout(const dpdf_block *b, const float *input, const float *st
     if (!b || !input || !state || !output || !state_out || layout_flags > 3) return -1;
     const int f = b->freq;
     float x[48*64], bi[48*128], mid[48*64], a[48*192], hproj[48*192], p[48*64];
-    float h[64], step[192];
     const float *bias=b->params,*fib=b->params+768,*nis=fib+64,*nib=nis+64;
     const float *tib=b->params+960,*thb=tib+192,*fob=b->params+1344,*nos=fob+64,*nob=nos+64;
     const float *features=(layout_flags & DPDF_INPUT_FREQ_MAJOR)?input:x;
     if (!(layout_flags & DPDF_INPUT_FREQ_MAJOR)) {
 #if DPDF_MODEL_SIZE == 2
-        dpdf_transpose_avx2(input,x,64,f);
+        dpdf_transpose_avx2(input,x,64,f,0);
 #else
         for (int r=0;r<f;++r) for (int c=0;c<64;++c) x[r*64+c]=input[c*f+r];
 #endif
     }
-    float *intra[2]={a,hproj};
     dpdf_qaffine_pair(b->q[0],b->q[1],features,bias,bias+384,a,hproj,f);
-    for (int direction = 0; direction < 2; ++direction) {
-        memset(h, 0, sizeof(h));
-
-        for (int t = 0; t < f; ++t) {
-            int r = direction == 0 ? t : f-1-t;
-            if (t==0) {
-                const float *initial_bias=bias+direction*384+192;
-                for (int c=0;c<192;++c) step[c]=0.0f+initial_bias[c];
-            } else
-                affine(b, 2+direction, h, bias+direction*384+192, step, 1);
-            dpdf_gates_avx2(intra[direction]+r*192, step, h, h, 1);
-            memcpy(bi+r*128+direction*64, h, sizeof(h));
-        }
-    }
+    dpdf_qrecur(b->q[2],b->q[3],a,hproj,bias+192,bias+384+192,f,bi);
     affine(b, 4, bi, fib, p, f);
     dpdf_norm_residual_avx2(mid, p, features, nis, nib, b->eps[0], f);
     affine(b, 5, mid, tib, a, f);
@@ -95,7 +80,7 @@ int dpdf_process_layout(const dpdf_block *b, const float *input, const float *st
     dpdf_norm_residual_avx2(final, p, mid, nos, nob, b->eps[1], f);
     if (!(layout_flags & DPDF_OUTPUT_FREQ_MAJOR)) {
 #if DPDF_MODEL_SIZE == 2
-        dpdf_transpose_avx2(x,output,f,64);
+        dpdf_transpose_avx2(x,output,f,64,0);
 #else
         for (int r=0;r<f;++r) for (int c=0;c<64;++c) output[c*f+r]=x[r*64+c];
 #endif

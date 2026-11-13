@@ -50,6 +50,11 @@ void dpdf_dense_run(dpdf_dense *d,const float *x,float *y,int rows) {
         if (output==d->y) for (int r=0;r<m;++r) memcpy(y+(start+r)*d->n,output+r*d->np,d->n*sizeof(float));
     }
 }
+int dpdf_dense_cm_run(dpdf_dense *d,const float *const *pieces,int count,int width,float *y,int relu) {
+    if (d->k!=64 || d->n!=64 || count<1 || count>3 || width<=0 || width%8 || count*width>480) return -1;
+    dpdf_qaffine_cm(d->q,pieces,count,width,d->bias,y,relu);
+    return 0;
+}
 size_t dpdf_dense_bytes(const dpdf_dense *d) {
     if (!d) return 0;
     size_t b=sizeof(*d)+(size_t)d->np*4;
