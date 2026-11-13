@@ -86,3 +86,27 @@ def test_native_backend_validates_inputs(native_library, tmp_path):
     corrupt.write_bytes(data)
     with pytest.raises(ValueError, match="SHA-256"):
         NativeFrameRunner(model, native_library, corrupt)
+
+
+@pytest.mark.parametrize("size", [2, 8])
+def test_native_worker_thread_matches_single_thread(native_library, size):
+    model = f"dpdfnet{size}_48khz_hr"
+    options = dict(
+        model=model, backend="native", native_library=native_library,
+        native_weights=_ROOT / "models" / model / "weights.f32",
+    )
+    audio = np.random.default_rng(size + 20).normal(0, 0.05, 9600).astype(np.float32)
+    single = StreamEnhancer(**options)
+    worker = StreamEnhancer(**options, native_worker_thread=True)
+    expected = single.process(audio)
+    np.testing.assert_array_equal(worker.process(audio), expected)
+    worker.reset()
+    np.testing.assert_array_equal(worker.process(audio), expected)
+    np.testing.assert_array_equal(worker.flush(), single.flush())
+    worker._runner.close()
+    single._runner.close()
+
+
+def test_native_worker_thread_needs_native_backend():
+    with pytest.raises(ValueError, match="native_worker_thread"):
+        StreamEnhancer(model="dpdfnet2", native_worker_thread=True)
