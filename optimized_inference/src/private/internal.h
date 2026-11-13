@@ -11,6 +11,9 @@ size_t dpdf_qbytes(const dpdf_qmatrix *);
 void dpdf_qaffine(const dpdf_qmatrix *, const float *, const float *, float *, int);
 void dpdf_qaffine_pair(const dpdf_qmatrix *, const dpdf_qmatrix *, const float *,
                        const float *, const float *, float *, float *, int);
+/* Bidirectional K=64, N=192 GRU recurrence; see int8_kernels.inc. */
+void dpdf_qrecur(const dpdf_qmatrix *, const dpdf_qmatrix *, const float *, const float *,
+                 const float *, const float *, int, float *);
 /* K=N=64 pointwise projection of channel-major pieces; see int8_kernels.inc. */
 void dpdf_qaffine_cm(const dpdf_qmatrix *, const float *const *, int, int,
                      const float *, float *, int);

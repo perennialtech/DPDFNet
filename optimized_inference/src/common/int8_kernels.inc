@@ -452,6 +452,39 @@ void DPDF_QPAIR_IMPL(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,const float *
     }
 }
 
+/* Bidirectional intra-frequency GRU recurrence for K=64, N=192 matrices:
+ * direction 0 walks rows 0..f-1 with q0, direction 1 walks f-1..0 with q1.
+ * Each step quantizes h, projects it, applies the gates and stores h in
+ * bi[r*128+direction*64]. The directions are independent, so the steps are
+ * software-pipelined: one direction's latency-bound gates and quantization
+ * sit just before the other direction's throughput-bound projection. Every
+ * direction keeps its exact operation sequence. */
+void DPDF_QRECUR_IMPL(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,
+        const float *intra0,const float *intra1,const float *bias0,const float *bias1,
+        int f,float *bi) {
+    float h0[64],h1[64],step0[192],step1[192];
+    _Alignas(32) int8_t act0[64],act1[64];
+    float scale0,scale1; int zp0,zp1;
+    memset(h0,0,sizeof(h0)); memset(h1,0,sizeof(h1));
+    for (int c=0;c<192;++c) { step0[c]=0.0f+bias0[c]; step1[c]=0.0f+bias1[c]; }
+    dpdf_gates_avx2(intra0,step0,h0,h0,1);
+    memcpy(bi,h0,sizeof(h0));
+    dpdf_gates_avx2(intra1+(f-1)*192,step1,h1,h1,1);
+    memcpy(bi+(f-1)*128+64,h1,sizeof(h1));
+    if (f>1) quantize64(h0,act0,&scale0,&zp0);
+    for (int t=1;t<f;++t) {
+        const int r1=f-1-t;
+        quantize64(h1,act1,&scale1,&zp1);
+        dpdf_qaffine64_fused_avx2(act0,q0->packed,q0->sum,q0->scale,bias0,step0,scale0,zp0);
+        dpdf_gates_avx2(intra0+t*192,step0,h0,h0,1);
+        memcpy(bi+t*128,h0,sizeof(h0));
+        if (t+1<f) quantize64(h0,act0,&scale0,&zp0);
+        dpdf_qaffine64_fused_avx2(act1,q1->packed,q1->sum,q1->scale,bias1,step1,scale1,zp1);
+        dpdf_gates_avx2(intra1+r1*192,step1,h1,h1,1);
+        memcpy(bi+r1*128+64,h1,sizeof(h1));
+    }
+}
+
 /* Channel-major pointwise projection for K=N=64: each of count (1-3) pieces
  * is [64][width]; y is [64][count*width] and position t*count+j is column t
  * of piece j. Quantization, integer sums and the FP32 epilogue match the
