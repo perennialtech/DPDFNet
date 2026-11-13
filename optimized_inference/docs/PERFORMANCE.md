@@ -46,6 +46,25 @@ The [32-run evidence](../validation/repeated_timing.json) records every run,
 per-batch statistics, protocol and input/library identities. It supersedes the
 initial 12-run package summary for the overview table.
 
+### Kernel optimization of the fixed graph
+
+A later round of exact kernel changes (direct state writes, channel-major
+pointwise convolutions, the pipelined bidirectional recurrence, shorter
+quantization chains, normalization and convolution specializations) leaves
+every spectrum and state value bit-identical. Interleaved in-process
+comparisons against the preceding fixed-W7A8 build, alternating 80 blocks of
+speech-like spectra on one pinned core, gave these median per-block changes in
+cycles per hop:
+
+| Host and path | `dpdfnet2_48khz_hr` | `dpdfnet8_48khz_hr` |
+| --- | ---: | ---: |
+| Core i5-12600K, AVX-VNNI, release build | **−22.4%** | **−18.8%** |
+| Core i5-12600K, AVX2-only build | **−18.9%** | **−14.5%** |
+| Zen 3 VM, AVX2 path of the release build | **−13.7%** | **−10.9%** |
+
+These are same-session relative measurements, not the absolute latencies in
+the table above, and the hosts differ from the i7-8700 used there.
+
 ### Benchmark history and comparisons
 
 The separate [packaging comparison](../validation/package_timing.json) used
@@ -115,12 +134,12 @@ model**, including flush hops. Reset replay and independent concurrent contexts
 also match. This broader check preserves outputs; its 65 files were not all
 scored for perceptual quality.
 
-The **19 baseline contract tests** cover the public API, both model lifetimes,
+The **22 baseline contract tests** cover the public API, both model lifetimes,
 weight ownership, reset, in-place processing, graph layouts, scalar numerical
-oracles and guarded assembly boundaries/FP control modes. When AVX-VNNI is
-available, six additional contracts exercise its specialized kernels. The
-fixed-W7A8 cleanup passed all 25 in a VNNI-enabled release build and all 19
-in the AVX2-only fallback build. Separate installed shared/static CMake
+oracles, the channel-major pointwise kernel and guarded assembly
+boundaries/FP control modes. When AVX-VNNI is available, seven additional
+contracts exercise its specialized kernels. The current kernels pass all 29 in
+a VNNI-enabled release build and all 22 in the AVX2-only fallback build. Separate installed shared/static CMake
 consumers build and run. The shared kernel consolidation also matches the
 accepted per-model C sources after preprocessing.
 

@@ -19,10 +19,12 @@ transposes. Matrix tiles use packed 32-byte operands; kernels specialize the
 fixed graph's common 64-input projections. Model 2 uses fused four-row
 paired projections on both AVX2 and AVX-VNNI; model 8 uses them on AVX-VNNI
 only (its original AVX2 tiled reduction benchmarks faster). Model 2 also
-uses a 256-input assembly projection and AVX2 arithmetic surrounding unchanged
-scalar libm calls in its generated GRU cells. Both models share one recurrent
-64-to-192 row kernel with twelve independent accumulators per pass, enough to
-hide AVX-VNNI dot-product latency. Model 8 retains its compiler profile.
+uses a 256-input assembly projection. Both models use AVX2 arithmetic
+surrounding unchanged scalar libm calls in their generated GRU cells, and share
+one recurrent 64-to-192 row kernel with twelve independent accumulators per
+pass, enough to hide AVX-VNNI dot-product latency. The intra-frequency GRU
+steps both directions together, so each direction's quantization and gates
+overlap the other's dot products. Model 8 retains its compiler profile.
 
 The 64-channel pointwise convolutions stay channel-major. One kernel quantizes
 each position across its 64 inputs, broadcasts packed weights into the integer
