@@ -43,12 +43,12 @@ static int transpose_check(int rows,int cols,int pattern,int avx,uint32_t *seed)
         expected[c*rows+r]=x[1+r*cols+c];
     for (size_t i=0;i<count;++i) expected[i]=expected[i]>0?expected[i]:0.0f;
 #ifdef DPDF_X86_DISPATCH
-    if (avx) dpdf_transpose_avx2(x+1,y+1,rows,cols,rows,1);
+    if (avx) dpdf_transpose_avx2(x+1,y+1,rows,cols,1);
     else
 #else
     (void)avx;
 #endif
-    dpdf_transpose_scalar(x+1,y+1,rows,cols,rows,1);
+    dpdf_transpose_scalar(x+1,y+1,rows,cols,1);
     int ok=!memcmp(before,x,(count+2)*sizeof(float)) &&
            !memcmp(expected,y+1,count*sizeof(float)) &&
            !memcmp(y,before,sizeof(float)) && !memcmp(y+count+1,before,sizeof(float));

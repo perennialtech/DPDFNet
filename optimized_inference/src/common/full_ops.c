@@ -2,11 +2,11 @@
 #include <math.h>
 
 /* Disjoint row-major input/output, including arbitrary edge dimensions. */
-void dpdf_transpose_scalar(const float *x,float *y,int rows,int cols,int y_stride,int relu) {
+void dpdf_transpose_scalar(const float *x,float *y,int rows,int cols,int relu) {
     for (int r=0;r<rows;r+=8) for (int c=0;c<cols;c+=8)
         for (int i=r;i<r+8 && i<rows;++i) for (int j=c;j<c+8 && j<cols;++j) {
             float v=x[i*cols+j];
-            y[j*y_stride+i]=relu ? (v>0?v:0.0f) : v;
+            y[j*rows+i]=relu ? (v>0?v:0.0f) : v;
         }
 }
 

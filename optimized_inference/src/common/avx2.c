@@ -122,11 +122,11 @@ void dpdf_norm_residual_avx2(float *out,const float *p,const float *skip,
                                           scale,bias,eps,rows-r);
 }
 
-/* Exact 8x8 transpose: y[c*y_stride+r]=x[r*cols+c]. The pointwise CNN layout
- * conversions move bits only. With relu set, each element instead takes the
- * graph's x>0?x:0 result; max(x,0) returns its second operand for NaN and
- * both zeros, so it is the same selection. */
-void dpdf_transpose_avx2(const float *x,float *y,int rows,int cols,int y_stride,int relu) {
+/* Exact 8x8 transpose: the CNN layout conversions move bits only. With relu
+ * set, each element instead takes the graph's x>0?x:0 result; max(x,0)
+ * returns its second operand for NaN and both zeros, so it is the same
+ * selection. */
+void dpdf_transpose_avx2(const float *x,float *y,int rows,int cols,int relu) {
     const __m256 zero=_mm256_setzero_ps();
     int r=0;
     for (;r+7<rows;r+=8) {
@@ -150,23 +150,23 @@ void dpdf_transpose_avx2(const float *x,float *y,int rows,int cols,int y_stride,
             a2=_mm256_shuffle_ps(b1,b3,0x44); a3=_mm256_shuffle_ps(b1,b3,0xee);
             a4=_mm256_shuffle_ps(b4,b6,0x44); a5=_mm256_shuffle_ps(b4,b6,0xee);
             a6=_mm256_shuffle_ps(b5,b7,0x44); a7=_mm256_shuffle_ps(b5,b7,0xee);
-            _mm256_storeu_ps(y+(c+0)*y_stride+r,_mm256_permute2f128_ps(a0,a4,0x20));
-            _mm256_storeu_ps(y+(c+1)*y_stride+r,_mm256_permute2f128_ps(a1,a5,0x20));
-            _mm256_storeu_ps(y+(c+2)*y_stride+r,_mm256_permute2f128_ps(a2,a6,0x20));
-            _mm256_storeu_ps(y+(c+3)*y_stride+r,_mm256_permute2f128_ps(a3,a7,0x20));
-            _mm256_storeu_ps(y+(c+4)*y_stride+r,_mm256_permute2f128_ps(a0,a4,0x31));
-            _mm256_storeu_ps(y+(c+5)*y_stride+r,_mm256_permute2f128_ps(a1,a5,0x31));
-            _mm256_storeu_ps(y+(c+6)*y_stride+r,_mm256_permute2f128_ps(a2,a6,0x31));
-            _mm256_storeu_ps(y+(c+7)*y_stride+r,_mm256_permute2f128_ps(a3,a7,0x31));
+            _mm256_storeu_ps(y+(c+0)*rows+r,_mm256_permute2f128_ps(a0,a4,0x20));
+            _mm256_storeu_ps(y+(c+1)*rows+r,_mm256_permute2f128_ps(a1,a5,0x20));
+            _mm256_storeu_ps(y+(c+2)*rows+r,_mm256_permute2f128_ps(a2,a6,0x20));
+            _mm256_storeu_ps(y+(c+3)*rows+r,_mm256_permute2f128_ps(a3,a7,0x20));
+            _mm256_storeu_ps(y+(c+4)*rows+r,_mm256_permute2f128_ps(a0,a4,0x31));
+            _mm256_storeu_ps(y+(c+5)*rows+r,_mm256_permute2f128_ps(a1,a5,0x31));
+            _mm256_storeu_ps(y+(c+6)*rows+r,_mm256_permute2f128_ps(a2,a6,0x31));
+            _mm256_storeu_ps(y+(c+7)*rows+r,_mm256_permute2f128_ps(a3,a7,0x31));
         }
         for (;c<cols;++c) for (int i=0;i<8;++i) {
             float v=x[(r+i)*cols+c];
-            y[c*y_stride+r+i]=relu ? (v>0?v:0.0f) : v;
+            y[c*rows+r+i]=relu ? (v>0?v:0.0f) : v;
         }
     }
     for (;r<rows;++r) for (int c=0;c<cols;++c) {
         float v=x[r*cols+c];
-        y[c*y_stride+r]=relu ? (v>0?v:0.0f) : v;
+        y[c*rows+r]=relu ? (v>0?v:0.0f) : v;
     }
 }
 

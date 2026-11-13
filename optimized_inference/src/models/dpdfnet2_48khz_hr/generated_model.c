@@ -674,9 +674,9 @@ dpdf_convop_run(m->conv[20],((m->arena+79984)+15360),(m->arena+2144));
 for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+0,(m->arena+17952)+b*480,480*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+480,(m->arena+2144)+b*480,480*sizeof(float));
 /* 289: Conv /model/df_dec/df_convp/df_convp.2/Conv */
-dpdf_transpose_avx2((m->arena+69152),(m->arena+71072),10,96,10,0);
+dpdf_transpose_avx2((m->arena+69152),(m->arena+71072),10,96,0);
 dpdf_dense_run(m->dense[202],(m->arena+71072),(m->arena+72032),96);
-dpdf_transpose_avx2((m->arena+72032),(m->arena+69152),96,10,96,1);
+dpdf_transpose_avx2((m->arena+72032),(m->arena+69152),96,10,1);
 /* 290: Relu /model/df_dec/df_convp/df_convp.4/Relu */
 /* 291: Transpose /model/df_dec/Transpose */
 for (int t2=0;t2<96;++t2) for (int t3=0;t3<10;++t3) (m->arena+70112)[t2*10+t3*1]=(m->arena+69152)[t2*1+t3*96];

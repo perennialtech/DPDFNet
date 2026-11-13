@@ -86,8 +86,7 @@ int main(void) {
     for (size_t a=0;a<sizeof(dims)/sizeof(dims[0]);++a)
       for (size_t b=0;b<sizeof(dims)/sizeof(dims[0]);++b) {
         int rows=dims[a],cols=dims[b],n=rows*cols;
-        const int pad=5,span=cols*(rows+pad);
-        float *storage=malloc((n+2)*sizeof(float)),*dest=malloc((span+2)*sizeof(float));
+        float *storage=malloc((n+2)*sizeof(float)),*dest=malloc((n+2)*sizeof(float));
         CHECK(storage && dest);
         float *x=storage+1,*y=dest+1;
         for (int i=0;i<n;++i) {
@@ -95,22 +94,18 @@ int main(void) {
             if (i%13==0) bits=0x7fc01234u; /* Preserve NaN payloads as well. */
             memcpy(x+i,&bits,4);
         }
-        for (int tier=0;tier<2;++tier) for (int padded=0;padded<2;++padded) {
+        for (int tier=0;tier<2;++tier) {
             dpdf_transpose_fn transpose=dpdf_transpose_scalar;
 #ifdef DPDF_X86_DISPATCH
             if (tier==1) { if (!dpdf_has_avx2()) continue; transpose=dpdf_transpose_avx2; }
 #else
             if (tier==1) continue;
 #endif
-            /* A padded destination stride must leave the gaps between columns alone. */
-            const int stride=rows+(padded?pad:0),end=(cols-1)*stride+rows;
-            for (int i=0;i<span+2;++i) dest[i]=-7.0f-(float)i;
-            transpose(x,y,rows,cols,stride,0);
-            CHECK(dest[0]==-7.0f && dest[end+1]==-8.0f-(float)end);
+            dest[0]=12345; dest[n+1]=-12345;
+            transpose(x,y,rows,cols,0);
+            CHECK(dest[0]==12345 && dest[n+1]==-12345);
             for (int r=0;r<rows;++r) for (int c=0;c<cols;++c)
-                CHECK(!memcmp(y+c*stride+r,x+r*cols+c,4));
-            for (int c=0;c+1<cols;++c) for (int g=rows;g<stride;++g)
-                CHECK(y[c*stride+g]==-8.0f-(float)(c*stride+g));
+                CHECK(!memcmp(y+c*rows+r,x+r*cols+c,4));
         }
         free(storage);free(dest);
       }

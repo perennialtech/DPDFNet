@@ -64,7 +64,7 @@ int dpdf_process_layout(const dpdf_block *b, const float *input, const float *st
     const float *features=(layout_flags & DPDF_INPUT_FREQ_MAJOR)?input:x;
     if (!(layout_flags & DPDF_INPUT_FREQ_MAJOR)) {
 #if DPDF_MODEL_SIZE == 2
-        dpdf_transpose_avx2(input,x,64,f,64,0);
+        dpdf_transpose_avx2(input,x,64,f,0);
 #else
         for (int r=0;r<f;++r) for (int c=0;c<64;++c) x[r*64+c]=input[c*f+r];
 #endif
@@ -95,7 +95,7 @@ int dpdf_process_layout(const dpdf_block *b, const float *input, const float *st
     dpdf_norm_residual_avx2(final, p, mid, nos, nob, b->eps[1], f);
     if (!(layout_flags & DPDF_OUTPUT_FREQ_MAJOR)) {
 #if DPDF_MODEL_SIZE == 2
-        dpdf_transpose_avx2(x,output,f,64,f,0);
+        dpdf_transpose_avx2(x,output,f,64,0);
 #else
         for (int r=0;r<f;++r) for (int c=0;c<64;++c) output[c*f+r]=x[r*64+c];
 #endif
