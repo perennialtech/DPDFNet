@@ -740,7 +740,8 @@ void DPDF_QCM_IMPL(const dpdf_qmatrix *q,const float *const *pieces,int count,in
     _Alignas(32) int32_t zps[DPDF_CM_MAX];
     for (int t=0;t<width;t+=8) {
         __m256 inv[3],z[3],live[3];
-        __m256i scale_bits[3],points[3];
+        /* Zeroed: interleave32 reads only count entries, which GCC cannot prove. */
+        __m256i scale_bits[3]={0},points[3]={0};
         for (int j=0;j<count;++j) {
             __m256 lo,hi,scale,constant; __m256i zp;
             cm_range(pieces[j]+t,width,&lo,&hi);
@@ -759,7 +760,7 @@ void DPDF_QCM_IMPL(const dpdf_qmatrix *q,const float *const *pieces,int count,in
         int masked=0;
         for (int j=0;j<count;++j) masked|=_mm256_movemask_ps(live[j])!=0xff;
         for (int g=0;g<16;++g) {
-            __m256i bytes[3];
+            __m256i bytes[3]={0};
             for (int j=0;j<count;++j) bytes[j]=masked ? cm_bytes(pieces[j]+g*4*width+t,width,live[j],inv[j],z[j],1)
                                                     : cm_bytes(pieces[j]+g*4*width+t,width,live[j],inv[j],z[j],0);
             interleave32(bytes,count,out);
