@@ -60,7 +60,7 @@ foreach(size IN ITEMS 2 8)
     src/common/extended_ops.c
     src/common/qdot64_fixed_avx2.S src/common/qdot4pair_fixed_avx2.S
     src/common/qaffine4pair64_fused_avx2.S
-    ${model_dir}/qaffine64_fused_avx2.S)
+    src/common/qaffine64_fused_avx2.S)
   target_include_directories(backend${size} PRIVATE include src src/private)
   target_compile_definitions(backend${size} PRIVATE DPDF_MODEL_SIZE=${size}
     DPDF_X86_DISPATCH DPDF_QASM64 DPDF_QFUSED64 DPDF_QPAIR_FIXED DPDF_QPAIR_FUSED64)
@@ -76,7 +76,7 @@ foreach(size IN ITEMS 2 8)
     target_sources(backend${size} PRIVATE src/common/int8_vnni.c
       src/common/qdot64_fixed_vnni.S src/common/qdot4pair_fixed_vnni.S
       src/common/qaffine4pair64_fused_vnni.S
-      ${model_dir}/qaffine64_fused_vnni.S)
+      src/common/qaffine64_fused_vnni.S)
     if(size EQUAL 2)
       target_sources(backend2 PRIVATE ${model_dir}/qaffine256_fused_vnni.S)
     endif()

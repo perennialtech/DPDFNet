@@ -110,7 +110,7 @@ void dpdf_qaffine256_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
 #endif
 #ifdef DPDF_QFUSED64
 void dpdf_qaffine64_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
-        const float *,const float *,float *,float,int,int);
+        const float *,const float *,float *,float,int);
 #endif
 #endif
 /* Keep integer reduction separate from quantization/dequantization: inlining
@@ -173,19 +173,12 @@ static void qaffine_row(const dpdf_qmatrix *q,const float *x,const float *bias,f
 #ifdef DPDF_QFUSED64
     if (k==64 && n==192) {
         dpdf_qaffine64_fused_avx2(activation,q->packed,q->sum,q->scale,bias,y,
-                                activation_scale,zp,3);
+                                activation_scale,zp);
         return;
     }
 #endif
     int c=0;
     for (;c+63<n;c+=64) {
-#ifdef DPDF_QFUSED64
-        if (k==64) {
-            dpdf_qaffine64_fused_avx2(activation,q->packed+c*k,q->sum+c,q->scale+c,
-                                    bias+c,y+c,activation_scale,zp,1);
-            continue;
-        }
-#endif
         int32_t integer_sums[64];
 #ifdef DPDF_QASM64
         if (k==64) dpdf_qdot64_fixed_avx2(activation,q->packed+c*k,integer_sums);

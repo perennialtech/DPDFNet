@@ -14,10 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [
     "src/common/qdot64_fixed_avx2.S",
     "src/common/qdot4pair_fixed_avx2.S",
-    "src/models/dpdfnet2_48khz_hr/qaffine64_fused_avx2.S",
     "src/models/dpdfnet2_48khz_hr/qaffine256_fused_avx2.S",
     "src/common/qaffine4pair64_fused_avx2.S",
-    "src/models/dpdfnet8_48khz_hr/qaffine64_fused_avx2.S",
+    "src/common/qaffine64_fused_avx2.S",
 ]
 
 

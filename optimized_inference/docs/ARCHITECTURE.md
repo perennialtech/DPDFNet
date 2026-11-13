@@ -20,8 +20,9 @@ fixed graph's common 64-input projections. Model 2 uses fused four-row
 paired projections on both AVX2 and AVX-VNNI; model 8 uses them on AVX-VNNI
 only (its original AVX2 tiled reduction benchmarks faster). Model 2 also
 uses a 256-input assembly projection and AVX2 arithmetic surrounding unchanged
-scalar libm calls in its generated GRU cells. Model 8 retains its accepted
-fixed-row kernels and compiler profile.
+scalar libm calls in its generated GRU cells. Both models share one recurrent
+64-to-192 row kernel with twelve independent accumulators per pass, enough to
+hide AVX-VNNI dot-product latency. Model 8 retains its compiler profile.
 
 Model-specific choices in shared C sources are selected by the private
 `DPDF_MODEL_SIZE` compile definition. These branches preserve the accepted
