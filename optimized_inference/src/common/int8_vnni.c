@@ -6,4 +6,5 @@
 #define DPDF_INT8_VNNI 1
 #define DPDF_QAFFINE_IMPL dpdf_qaffine_vnni
 #define DPDF_QPAIR_IMPL dpdf_qaffine_pair_vnni
+#define DPDF_QCM_IMPL dpdf_qaffine_cm_vnni
 #include "int8_kernels.inc"

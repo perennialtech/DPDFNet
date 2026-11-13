@@ -120,7 +120,8 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/models/dpdfnet8_48khz_hr/weights.f32")
   foreach(size IN ITEMS 2 8)
     foreach(test IN ITEMS full_contract layout_contract generated_gru_contract
-        conv_helpers_contract int8_contract int8_dispatch_contract fused_contract pair_contract)
+        conv_helpers_contract int8_contract int8_dispatch_contract fused_contract pair_contract
+        pointwise_contract)
       set(target "model${size}_${test}")
       add_executable(${target} tests/${test}.c $<TARGET_OBJECTS:backend${size}>)
       target_include_directories(${target} PRIVATE include src src/private)

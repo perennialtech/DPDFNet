@@ -24,6 +24,17 @@ scalar libm calls in its generated GRU cells. Both models share one recurrent
 64-to-192 row kernel with twelve independent accumulators per pass, enough to
 hide AVX-VNNI dot-product latency. Model 8 retains its compiler profile.
 
+The 64-channel pointwise convolutions stay channel-major. One kernel quantizes
+each position across its 64 inputs, broadcasts packed weights into the integer
+dot products and writes the activated channel-major result, so no layout
+transposes surround it; the decoder's transposed-convolution pieces are
+interleaved while quantizing. Per position, its quantization, integer sums and
+FP32 epilogue are those of the row-major path, which `pointwise_contract`
+checks bit for bit. Its inner loops are inline assembly because GCC spills the
+sixteen-register AVX-VNNI block. Batch quantization finds every row's range
+before deriving parameters eight rows at a time, so the serial range and
+division chain of one row does not stall the next.
+
 Model-specific choices in shared C sources are selected by the private
 `DPDF_MODEL_SIZE` compile definition. These branches preserve the accepted
 operation order of each graph. Do not replace explicit operations with FMA

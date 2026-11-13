@@ -17,6 +17,7 @@
 #define dpdf_dense_create dpdfnet8_private_dense_create
 #define dpdf_dense_destroy dpdfnet8_private_dense_destroy
 #define dpdf_dense_run dpdfnet8_private_dense_run
+#define dpdf_dense_cm_run dpdfnet8_private_dense_cm_run
 #define dpdf_depthwise_stride_avx2 dpdfnet8_private_depthwise_stride_avx2
 #define dpdf_destroy dpdfnet8_private_destroy
 #define dpdf_dprnn dpdfnet8_private_dprnn
@@ -41,6 +42,7 @@
 #define dpdf_qaffine dpdfnet8_private_qaffine
 #define dpdf_qaffine64_fused_avx2 dpdfnet8_private_qaffine64_fused_avx2
 #define dpdf_qaffine_pair dpdfnet8_private_qaffine_pair
+#define dpdf_qaffine_cm dpdfnet8_private_qaffine_cm
 #define dpdf_qbytes dpdfnet8_private_qbytes
 #define dpdf_qcreate dpdfnet8_private_qcreate
 #define dpdf_qdestroy dpdfnet8_private_qdestroy
@@ -56,10 +58,13 @@
 #define dpdf_has_avx_vnni dpdfnet8_private_has_avx_vnni
 #define dpdf_qaffine_avx2 dpdfnet8_private_qaffine_avx2
 #define dpdf_qaffine_pair_avx2 dpdfnet8_private_qaffine_pair_avx2
+#define dpdf_qaffine_cm_avx2 dpdfnet8_private_qaffine_cm_avx2
 #define dpdf_qaffine_vnni dpdfnet8_private_qaffine_vnni
 #define dpdf_qaffine_pair_vnni dpdfnet8_private_qaffine_pair_vnni
+#define dpdf_qaffine_cm_vnni dpdfnet8_private_qaffine_cm_vnni
 #define dpdf_qaffine_impl dpdfnet8_private_qaffine_impl
 #define dpdf_qpair_impl dpdfnet8_private_qpair_impl
+#define dpdf_qcm_impl dpdfnet8_private_qcm_impl
 #define dpdf_qdot64_fixed_vnni dpdfnet8_private_qdot64_fixed_vnni
 #define dpdf_qdot4pair64_vnni dpdfnet8_private_qdot4pair64_vnni
 #define dpdf_qdot4pair96_vnni dpdfnet8_private_qdot4pair96_vnni

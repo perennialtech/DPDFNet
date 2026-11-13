@@ -14,10 +14,10 @@ dpdf_qmatrix *dpdf_qcreate(const float *w,int k,int n) {
     if (!w || k<=0 || k>512 || k%8 || n<=0 || n%8) return NULL;
     dpdf_qmatrix *q=calloc(1,sizeof(*q)); if (!q) return NULL;
     q->k=k; q->n=n;
-    q->affine=dpdf_qaffine_avx2; q->pair=dpdf_qaffine_pair_avx2;
+    q->affine=dpdf_qaffine_avx2; q->pair=dpdf_qaffine_pair_avx2; q->cm=dpdf_qaffine_cm_avx2;
 #ifdef DPDF_HAS_AVX_VNNI
     if (dpdf_has_avx_vnni()) {
-        q->affine=dpdf_qaffine_vnni; q->pair=dpdf_qaffine_pair_vnni;
+        q->affine=dpdf_qaffine_vnni; q->pair=dpdf_qaffine_pair_vnni; q->cm=dpdf_qaffine_cm_vnni;
     }
 #endif
     q->packed_allocation=malloc((size_t)k*n+63);
@@ -60,7 +60,12 @@ void dpdf_qaffine_pair(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,const float
                        const float *b0,const float *b1,float *y0,float *y1,int m) {
     q0->pair(q0,q1,x,b0,b1,y0,y1,m);
 }
+void dpdf_qaffine_cm(const dpdf_qmatrix *q,const float *const *pieces,int count,int width,
+                     const float *bias,float *y,int relu) {
+    q->cm(q,pieces,count,width,bias,y,relu);
+}
 
 #define DPDF_QAFFINE_IMPL dpdf_qaffine_avx2
 #define DPDF_QPAIR_IMPL dpdf_qaffine_pair_avx2
+#define DPDF_QCM_IMPL dpdf_qaffine_cm_avx2
 #include "int8_kernels.inc"
