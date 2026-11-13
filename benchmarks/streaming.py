@@ -24,13 +24,20 @@ def main() -> None:
     )
     parser.add_argument("--native-library", type=Path)
     parser.add_argument("--native-weights", type=Path)
+    parser.add_argument(
+        "--native-single-thread",
+        action="store_true",
+        help="Run native inference on the calling thread only",
+    )
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--warmup-frames", type=int, default=100)
     parser.add_argument(
         "--audio", type=Path, help="Optional recorded audio; resampled before timing"
     )
     parser.add_argument(
-        "--cpu", type=int, help="Pin this benchmark process to a Linux CPU"
+        "--cpu",
+        type=lambda text: {int(cpu) for cpu in text.split(",")},
+        help="Pin this benchmark process to Linux CPUs (comma-separated)",
     )
     parser.add_argument(
         "--paced",
@@ -47,10 +54,12 @@ def main() -> None:
             parser.error("native needs --native-library and --native-weights, not --onnx-path")
     elif not args.onnx_path or args.native_library or args.native_weights:
         parser.error("onnx/openvino needs --onnx-path, not native paths")
+    if args.native_single_thread and args.backend != "native":
+        parser.error("--native-single-thread needs --backend native")
     if args.seconds <= 0 or args.warmup_frames < 0:
         parser.error("--seconds must be positive and --warmup-frames non-negative")
     if args.cpu is not None:
-        os.sched_setaffinity(0, {args.cpu})
+        os.sched_setaffinity(0, args.cpu)
 
     from dpdfnet import StreamEnhancer
     from dpdfnet.audio import ensure_sample_rate, to_mono
@@ -80,7 +89,11 @@ def main() -> None:
     start = time.perf_counter_ns()
     kwargs = {"backend": args.backend} if args.backend != "onnx" else {}
     if args.backend == "native":
-        kwargs.update(native_library=args.native_library, native_weights=args.native_weights)
+        kwargs.update(
+            native_library=args.native_library,
+            native_weights=args.native_weights,
+            native_single_thread=args.native_single_thread,
+        )
     enhancer = StreamEnhancer(model=args.model, onnx_path=args.onnx_path, **kwargs)
     setup_ms = (time.perf_counter_ns() - start) / 1e6
     timings = np.empty(blocks, dtype=np.float64)
@@ -90,6 +103,8 @@ def main() -> None:
     returned_samples = 0
     next_arrival = time.perf_counter()
     for index in range(blocks):
+        if index == args.warmup_frames:
+            cpu_start = time.process_time_ns()
         chunk = audio[index * hop : (index + 1) * hop]
         if args.paced:
             time.sleep(max(0, next_arrival - time.perf_counter()))
@@ -107,6 +122,7 @@ def main() -> None:
         output.append(enhancer.flush())
         np.save(args.save_output, np.concatenate(output))
 
+    cpu_ms = (time.process_time_ns() - cpu_start) / 1e6
     measured = timings[args.warmup_frames :]
     packages = {"numpy": version("numpy")}
     if args.backend != "native":
@@ -122,6 +138,7 @@ def main() -> None:
             ).read_bytes()
         ).hexdigest(),
         "backend": args.backend,
+        "native_single_thread": args.native_single_thread,
         "paced": args.paced,
         "sample_rate": sr,
         "hop_samples": hop,
@@ -150,6 +167,7 @@ def main() -> None:
             )
         ),
         "mean_rtf": float(measured.mean() / 10),
+        "process_cpu_ms_per_hop": cpu_ms / measured.size,
         "calls_over_10ms": int(np.count_nonzero(measured > 10)),
         "completion_deadline_misses": int(
             np.count_nonzero(measured + lateness[args.warmup_frames :] > 10)

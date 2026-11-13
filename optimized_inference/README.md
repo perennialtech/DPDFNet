@@ -1,7 +1,10 @@
 # Optimized DPDFNet inference
 
-A small, single-threaded C runtime for **`dpdfnet2_48khz_hr`** and
+A small C runtime for **`dpdfnet2_48khz_hr`** and
 **`dpdfnet8_48khz_hr`**, with bundled weights and optimized AVX2 assembly kernels.
+Each context splits every hop across the calling thread and one helper
+thread, for 25–45% lower latency than one thread at identical output; a
+single-threaded mode is available.
 AVX-VNNI kernels are selected automatically on supported CPUs, with AVX2
 fallback in the same binary. Both models use the final W7A8 implementation:
 quantized matrix weights and
@@ -34,6 +37,12 @@ Each `dpdfnet_process` call consumes **one 10 ms spectral hop**, represented as
 962 floats: 481 complex bins with interleaved real/imaginary components. It
 returns the enhanced spectrum and next state without allocating memory.
 Use a separate context for every simultaneous call.
+
+Each context owns one helper thread that runs the model's two branches
+concurrently, with bit-identical results; see
+[worker thread](docs/API.md#worker-thread). To spend less CPU time instead,
+create it with
+`dpdfnet_create_with_flags(id, weights, count, DPDFNET_CREATE_SINGLE_THREAD)`.
 
 The host owns FFT/windowing and overlap-add synthesis. The model's **50 ms
 algorithmic delay** is unchanged. See the [API and audio contract](docs/API.md)

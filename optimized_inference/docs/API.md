@@ -11,6 +11,7 @@ version 1. The same library supports model IDs `DPDFNET_MODEL_2` and
    against `weights_sha256` or the bundled manifest before using them.
 3. Call `dpdfnet_create(id, weights, info->weight_floats)`. It copies/repacks the
    required weights; the source buffer may be freed after successful creation.
+   The context starts one helper thread; see [worker thread](#worker-thread).
 4. Allocate `info->state_floats` floats and call `dpdfnet_init_state(id, state)`.
    This initializes normalization seeds as well as zeroed recurrent entries.
 5. Call `dpdfnet_process` once per hop, passing the state from the preceding hop.
@@ -44,13 +45,77 @@ denormal handling.
 A context owns mutable scratch memory. Do not call the same context
 simultaneously or destroy it during processing. Separate contexts can run
 concurrently and can select different models. State belongs to the caller;
-there is no hidden stream state or internal worker thread.
+there is no hidden stream state.
 
 `dpdfnet_process` performs no allocation. Weight loading, context creation,
 reset, and memory allocation should happen outside the audio callback. Some
 kernel scratch uses the caller's stack; reserve at least 1 MiB of available
 stack when creating an inference thread. Preallocate spectral/audio buffers
 and avoid worker pool contention in the callback.
+
+## Worker thread
+
+A context owns one helper thread. Each hop runs the model's ERB and
+deep-filter branches at the same time, one on the calling thread and one on
+the helper. Spectrum and state outputs are bit-identical to a single-threaded
+context, in every rounding and denormal mode.
+
+`dpdfnet_create_with_flags(id, weights, count, DPDFNET_CREATE_SINGLE_THREAD)`
+opts out: that context runs every hop on the calling thread, with no helper,
+less CPU time and less memory. Flags of 0 behave like `dpdfnet_create`, and
+unknown flags return NULL. A context is also single-threaded when the
+creating thread may use only one CPU, or when the helper thread cannot be
+started; creation does not fail for either reason.
+
+The calling contract is unchanged: one `dpdfnet_process` call at a time per
+context, from any thread. The helper only runs work that call hands it, and
+the call returns after both branches finish.
+
+- **Cost.** On two free physical cores a hop took 24–45% less wall time in
+  our tests, for 10–65% more total CPU time; see [performance](PERFORMANCE.md). Model 8
+  owns 977,600 more heap bytes than a single-threaded context, model 2
+  879,296.
+- **Cores.** The helper inherits the creating thread's CPU affinity, scheduling
+  policy and priority when the context is created. Create the context from the
+  thread that will process audio, or from one with the same settings: an
+  ordinary-priority helper serving a real-time audio thread can be preempted.
+  When that is impractical (an audio callback thread owned by a framework),
+  find the `dpdfnet-lane` thread under `/proc/self/task` and set its
+  priority and affinity to match, or use `DPDFNET_CREATE_SINGLE_THREAD`.
+  The thread is named `dpdfnet-lane`. Two SMT siblings of one core gave only
+  about 12% in our tests, for nearly double the CPU time. With a single allowed
+  CPU, hops take as long as without the helper.
+- **Idle behaviour.** The helper sleeps in the kernel between hops. When hops
+  arrive at a steady cadence (100 µs to 100 ms, low jitter), it wakes shortly
+  before the next expected hop and spins until it starts, so its core is
+  already awake. That spin is most of the extra CPU time, and lasts at most
+  about 0.8 ms per hop. Within a hop the
+  two threads spin while waiting for each other, and sleep only after about
+  1 ms. Spinning threads yield every 20 µs or so, so a spinning thread never
+  holds a shared CPU its partner needs.
+- **Worst case.** If the helper has not started its branch by the time the
+  caller finishes the other one, the caller runs it too, so a late helper costs
+  about one single-threaded hop. A helper preempted partway through its branch
+  delays the hop until it is rescheduled, so under CPU contention an
+  individual hop can still exceed single-threaded time.
+- **Back-off.** When such delays recur, or the helper keeps arriving too late
+  to take any work, the context runs hops on the calling thread alone for a
+  while (64 hops, doubling to 4,096 while the problem persists) and then
+  tries the helper again. Outputs are identical either way. On a quiet
+  machine this does not trigger.
+- **Floating point.** The helper runs with the caller's MXCSR rounding and
+  denormal controls, and exception flags it raises are merged into the
+  caller's MXCSR.
+- **Signals and faults.** The helper blocks all signals, so they keep going to
+  the application's threads. A fault on the helper (such as an unmasked
+  floating-point exception, since the helper adopts the caller's MXCSR
+  masks) therefore ends the process without reaching the application's
+  handlers. Keep floating-point exceptions masked, as the release is validated.
+- **Fork.** A child process has no helper. A context inherited across `fork`
+  runs single-threaded there, with identical results, and can be destroyed
+  normally; the helper's stack is not reclaimed in the child.
+
+`dpdfnet_destroy` stops and joins the helper.
 
 ## FFT, synthesis and delay
 

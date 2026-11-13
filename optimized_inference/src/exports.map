@@ -3,6 +3,7 @@
     dpdfnet_get_model_info;
     dpdfnet_cpu_supported;
     dpdfnet_create;
+    dpdfnet_create_with_flags;
     dpdfnet_init_state;
     dpdfnet_process;
     dpdfnet_owned_bytes;

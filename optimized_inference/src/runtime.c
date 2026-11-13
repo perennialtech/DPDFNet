@@ -16,15 +16,19 @@ const dpdfnet_model_info *dpdfnet_get_model_info(dpdfnet_model_id id) {
     return b ? &b->info : NULL;
 }
 int dpdfnet_cpu_supported(void) { return dpdfnet_backend2()->cpu_supported(); }
-dpdfnet_model *dpdfnet_create(dpdfnet_model_id id, const float *weights, size_t count) {
+dpdfnet_model *dpdfnet_create_with_flags(dpdfnet_model_id id, const float *weights,
+                                         size_t count, uint32_t flags) {
     const dpdfnet_backend *b = select_backend(id);
     if (!b || !weights || count != b->info.weight_floats || !b->cpu_supported()) return NULL;
     dpdfnet_model *m = malloc(sizeof(*m));
     if (!m) return NULL;
     m->backend = b;
-    m->context = b->create(weights, count);
+    m->context = b->create(weights, count, flags);
     if (!m->context) { free(m); return NULL; }
     return m;
+}
+dpdfnet_model *dpdfnet_create(dpdfnet_model_id id, const float *weights, size_t count) {
+    return dpdfnet_create_with_flags(id, weights, count, 0);
 }
 int dpdfnet_init_state(dpdfnet_model_id id, float *state) {
     const dpdfnet_backend *b = select_backend(id);

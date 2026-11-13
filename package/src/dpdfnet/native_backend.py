@@ -11,6 +11,7 @@ import numpy as np
 
 _FLOAT_PTR = ct.POINTER(ct.c_float)
 _MODEL_IDS = {"dpdfnet2_48khz_hr": 2, "dpdfnet8_48khz_hr": 8}
+_CREATE_SINGLE_THREAD = 0x1
 
 
 class _ModelInfo(ct.Structure):
@@ -31,9 +32,16 @@ def _ptr(array: np.ndarray) -> _FLOAT_PTR:
 
 
 class NativeFrameRunner:
-    """One C context and recurrent state, with the same frame interface as ONNX."""
+    """One C context and recurrent state, with the same frame interface as ONNX.
 
-    def __init__(self, model: str, library: Path, weights: Path) -> None:
+    By default the context owns one helper thread that runs the model's two
+    branches concurrently, with bit-identical results. ``single_thread`` runs
+    every hop on the calling thread instead.
+    """
+
+    def __init__(
+        self, model: str, library: Path, weights: Path, single_thread: bool = False
+    ) -> None:
         self._handle = None
         if model not in _MODEL_IDS:
             raise ValueError("Native inference supports only the two 48 kHz HR models")
@@ -45,6 +53,13 @@ class NativeFrameRunner:
         lib.dpdfnet_cpu_supported.restype = ct.c_int
         lib.dpdfnet_create.argtypes = [ct.c_int, _FLOAT_PTR, ct.c_size_t]
         lib.dpdfnet_create.restype = ct.c_void_p
+        # Libraries without this symbol are always single-threaded.
+        single_thread = single_thread and hasattr(lib, "dpdfnet_create_with_flags")
+        if single_thread:
+            lib.dpdfnet_create_with_flags.argtypes = [
+                ct.c_int, _FLOAT_PTR, ct.c_size_t, ct.c_uint32
+            ]
+            lib.dpdfnet_create_with_flags.restype = ct.c_void_p
         lib.dpdfnet_init_state.argtypes = [ct.c_int, _FLOAT_PTR]
         lib.dpdfnet_init_state.restype = ct.c_int
         lib.dpdfnet_process.argtypes = [
@@ -68,9 +83,15 @@ class NativeFrameRunner:
         if weight_array.size != info.weight_floats:
             raise ValueError("Native model weight count does not match the library")
 
-        self._handle = lib.dpdfnet_create(
-            self._model_id, _ptr(weight_array), weight_array.size
-        )
+        if single_thread:
+            self._handle = lib.dpdfnet_create_with_flags(
+                self._model_id, _ptr(weight_array), weight_array.size,
+                _CREATE_SINGLE_THREAD,
+            )
+        else:
+            self._handle = lib.dpdfnet_create(
+                self._model_id, _ptr(weight_array), weight_array.size
+            )
         if not self._handle:
             raise RuntimeError("Could not construct the native inference context")
         try:

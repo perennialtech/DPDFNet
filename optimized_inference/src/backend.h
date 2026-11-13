@@ -4,7 +4,7 @@
 typedef struct {
     dpdfnet_model_info info;
     int (*cpu_supported)(void);
-    void *(*create)(const float *, size_t);
+    void *(*create)(const float *, size_t, uint32_t);
     int (*init_state)(float *);
     int (*process)(void *, const float *, const float *, float *, float *);
     size_t (*owned_bytes)(const void *);

@@ -31,9 +31,20 @@ typedef struct {
 DPDFNET_API const dpdfnet_model_info *dpdfnet_get_model_info(dpdfnet_model_id id);
 DPDFNET_API int dpdfnet_cpu_supported(void); /* AVX2 and FMA, including OS support. */
 /* Weights are copied. Validate their SHA-256 against metadata before creation.
- * Only the optimized W7A8 configuration is exposed. NULL means failure. */
+ * Only the optimized W7A8 configuration is exposed. NULL means failure.
+ * The context owns one helper thread, so each hop runs the ERB and DF branches
+ * concurrently with bit-identical results; the helper sleeps between hops and
+ * destroy joins it. If the creating thread may use only one CPU, or the
+ * thread cannot be started, the context runs on the calling thread alone. */
 DPDFNET_API dpdfnet_model *dpdfnet_create(dpdfnet_model_id id,
                                          const float *weights, size_t count);
+/* Run every hop on the calling thread, with no helper thread. */
+#define DPDFNET_CREATE_SINGLE_THREAD 0x1u
+/* dpdfnet_create with options; flags 0 is dpdfnet_create. Unknown flags
+ * return NULL. */
+DPDFNET_API dpdfnet_model *dpdfnet_create_with_flags(dpdfnet_model_id id,
+                                                    const float *weights, size_t count,
+                                                    uint32_t flags);
 /* Reset state using model normalization seeds, not all-zero initialization.
  * Return 0 on success, -1 for invalid ID or NULL state. */
 DPDFNET_API int dpdfnet_init_state(dpdfnet_model_id id, float *state);
