@@ -822,7 +822,7 @@ for (int b=0;b<1;++b) memcpy((m->arena+0)+b*962+192,((m->arena+73968)+2116)+b*77
 /* 376: Mul /Mul_1 */
 for (int i=0;i<962;++i) spec_out[i]=(m->arena+0)[i]*(m->weights+8)[0];
 /* 375: Concat /model/Concat */
-/*  defer the complete state handoff until all inputs are consumed. */
+/*  state read until here; other state was written after its last read. */
 memcpy(state_out+0,(m->arena+2944),481*sizeof(float));
 memcpy(state_out+481,(m->arena+1472),96*sizeof(float));
 memcpy(state_out+47652,(m->arena+976),256*sizeof(float));

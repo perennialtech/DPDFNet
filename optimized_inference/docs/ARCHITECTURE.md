@@ -53,6 +53,11 @@ or change quantization rounding without new numerical and audio evidence.
 - `src/models/*/generated_model.c` contains explicit fixed graph operations,
   weight offsets, state layout, and normalization seeds. These files belong to
   the supplied model/weight hashes; they are not a general ONNX interpreter.
+  They are maintained here by hand; no generator is in this repository. A
+  regenerated graph must reapply the direct state writes, channel-major
+  pointwise convolutions and fused ReLUs. Because state is written as soon as
+  its last read is done, a mid-graph `-1` (not reachable with these fixed
+  shapes) would leave the state partly updated.
 - `private/` holds kernel declarations and namespace mappings. These headers
   are not installed and do not define a consumer ABI.
 

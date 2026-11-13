@@ -88,7 +88,7 @@ separate caller overhead from machine/session effects. Mean ± SD improves the
 description of variability; it does not establish an optimization gain.
 
 For the current fixed-W7A8-only implementation, `dpdfnet_owned_bytes()`
-reports **3,980,284 bytes** (model 2) and **5,319,868 bytes** (model 8),
+reports **3,984,300 bytes** (model 2) and **5,325,420 bytes** (model 8),
 including the 16-byte public API wrapper. These exact owned-allocation counts
 were checked against both bundled weight files on an x86-64 release build;
 they are **not** the historical RSS measurements in the table above. Caller
