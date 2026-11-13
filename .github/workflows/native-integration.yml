@@ -25,6 +25,10 @@ jobs:
           - name: ASan and UBSan
             pgo: false
             config: '-DCMAKE_BUILD_TYPE=RelWithDebInfo -DDPDF_SANITIZE=ON -DBUILD_SHARED_LIBS=ON'
+          - name: TSan
+            pgo: false
+            tsan: true
+            config: '-DCMAKE_BUILD_TYPE=RelWithDebInfo -DDPDF_SANITIZE_THREAD=ON'
     name: ${{ matrix.name }}
     timeout-minutes: 20
     defaults:
@@ -36,6 +40,9 @@ jobs:
         if: matrix.pgo
         with:
           python-version: '3.12'
+      - name: Fit ThreadSanitizer's address layout
+        if: matrix.tsan
+        run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Check generated VNNI assembly
         run: python3 tools/generate_vnni.py --check
       - name: Verify both model weights

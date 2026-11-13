@@ -34,6 +34,13 @@ DPDFNET_API int dpdfnet_cpu_supported(void); /* AVX2 and FMA, including OS suppo
  * Only the optimized W7A8 configuration is exposed. NULL means failure. */
 DPDFNET_API dpdfnet_model *dpdfnet_create(dpdfnet_model_id id,
                                          const float *weights, size_t count);
+/* Give the context one helper thread. Each hop then runs the ERB and DF
+ * branches concurrently, with bit-identical results; the helper sleeps
+ * between hops. Destroy joins it. Unknown flags return NULL. */
+#define DPDFNET_CREATE_WORKER_THREAD 0x1u
+DPDFNET_API dpdfnet_model *dpdfnet_create_with_flags(dpdfnet_model_id id,
+                                                    const float *weights, size_t count,
+                                                    uint32_t flags);
 /* Reset state using model normalization seeds, not all-zero initialization.
  * Return 0 on success, -1 for invalid ID or NULL state. */
 DPDFNET_API int dpdfnet_init_state(dpdfnet_model_id id, float *state);

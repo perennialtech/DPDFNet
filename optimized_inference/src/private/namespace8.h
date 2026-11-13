@@ -18,6 +18,16 @@
 #define dpdf_dense_destroy dpdfnet8_private_dense_destroy
 #define dpdf_dense_run dpdfnet8_private_dense_run
 #define dpdf_dense_cm_run dpdfnet8_private_dense_cm_run
+#define dpdf_worker_create dpdfnet8_private_worker_create
+#define dpdf_worker_destroy dpdfnet8_private_worker_destroy
+#define dpdf_worker_bytes dpdfnet8_private_worker_bytes
+#define dpdf_worker_begin dpdfnet8_private_worker_begin
+#define dpdf_worker_pause dpdfnet8_private_worker_pause
+#define dpdf_worker_post dpdfnet8_private_worker_post
+#define dpdf_worker_join dpdfnet8_private_worker_join
+#define dpdf_worker_end dpdfnet8_private_worker_end
+#define dpdf_worker dpdfnet8_private_worker
+#define dpdf_task dpdfnet8_private_task
 #define dpdf_depthwise_stride_avx2 dpdfnet8_private_depthwise_stride_avx2
 #define dpdf_destroy dpdfnet8_private_destroy
 #define dpdf_dprnn dpdfnet8_private_dprnn
@@ -29,6 +39,8 @@
 #define dpdf_model dpdfnet8_private_model
 #define dpdf_model_arena_bytes dpdfnet8_private_model_arena_bytes
 #define dpdf_model_create dpdfnet8_private_model_create
+#define dpdf_model_scramble dpdfnet8_private_model_scramble
+#define dpdf_model_pause dpdfnet8_private_model_pause
 #define dpdf_model_destroy dpdfnet8_private_model_destroy
 #define dpdf_model_init_state dpdfnet8_private_model_init_state
 #define dpdf_model_owned_bytes dpdfnet8_private_model_owned_bytes

@@ -1,6 +1,7 @@
 /* Fixed graph for dpdfnet2_48khz_hr. Paired with the checksummed bundled weights. */
 #include "full_model.h"
 #include "extended_ops.h"
+#include "worker.h"
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -11,6 +12,8 @@ struct dpdf_model {
     dpdf_block *blocks[4];
  dpdf_dense *dense[219];
  dpdf_convop *conv[21];
+    float *lane_arena; /* DF lane arena, with DPDF_MODEL_LANES. */
+    dpdf_worker *worker;
 };
 const char *dpdf_model_weights_sha256(void) { return "cb7248b8fccbff7b32f254ec2ed0061e604514b2ccd98d997cd081a876424e7b"; }
 size_t dpdf_model_weight_count(void) { return 2582444; }
@@ -23,13 +26,15 @@ memset(state,0,56436*sizeof(float)); memcpy(state,seeds,sizeof(seeds)); return 0
 }
 void dpdf_model_destroy(dpdf_model *m) {
     if (!m) return;
+    dpdf_worker_destroy(m->worker); free(m->lane_arena);
     for (int i=0;i<4;++i) dpdf_destroy(m->blocks[i]);
     for (int i=0;i<219;++i) dpdf_dense_destroy(m->dense[i]);
 for (int i=0;i<21;++i) dpdf_convop_destroy(m->conv[i]);
 free(m->weight_allocation); free(m->arena); free(m);
 }
-dpdf_model *dpdf_model_create(const float *w,size_t count) {
-    if (!w || count!=dpdf_model_weight_count() || !dpdf_has_avx2()) return NULL;
+dpdf_model *dpdf_model_create(const float *w,size_t count,unsigned flags) {
+    if (!w || count!=dpdf_model_weight_count() || !dpdf_has_avx2() ||
+        (flags&~(DPDF_MODEL_LANES|DPDF_MODEL_WORKER)) || flags==DPDF_MODEL_WORKER) return NULL;
     for (size_t i=0;i<count;++i) if (!isfinite(w[i])) return NULL;
     dpdf_model *m=calloc(1,sizeof(*m)); if (!m) return NULL;
     m->weight_allocation=malloc(7137*sizeof(float)+31); m->arena=malloc(dpdf_model_arena_bytes());
@@ -298,234 +303,272 @@ m->conv[17]=dpdf_convop_create((w+232080),(w+232144),64,1,480,64,1,480,1,1,1,1,0
 m->conv[18]=dpdf_convop_create((w+232208),(w+232400),64,1,480,1,1,480,1,3,1,1,0,1,1); if (!m->conv[18]) { dpdf_model_destroy(m);return NULL; }
 m->conv[19]=dpdf_convop_create((w+184464),NULL,32,5,96,5,1,96,5,1,1,1,0,0,1); if (!m->conv[19]) { dpdf_model_destroy(m);return NULL; }
 m->conv[20]=dpdf_convop_create((w+185264),NULL,32,5,96,5,1,96,5,1,1,1,0,0,1); if (!m->conv[20]) { dpdf_model_destroy(m);return NULL; }
+if (flags&DPDF_MODEL_LANES) {
+    m->lane_arena=malloc(dpdf_model_arena_bytes());
+    if (!m->lane_arena) { dpdf_model_destroy(m); return NULL; }
+}
+if (flags&DPDF_MODEL_WORKER) {
+    m->worker=dpdf_worker_create();
+    if (!m->worker) { dpdf_model_destroy(m); return NULL; }
+}
 return m;
 }
 
 size_t dpdf_model_owned_bytes(const dpdf_model *m) {
 if (!m) return 0;
 size_t bytes=sizeof(*m)+7137*sizeof(float)+31+dpdf_model_arena_bytes();
+if (m->lane_arena) bytes+=dpdf_model_arena_bytes();
+if (m->worker) bytes+=dpdf_worker_bytes();
 for (int i=0;i<4;++i) bytes+=dpdf_block_bytes(m->blocks[i]);
 for (int i=0;i<219;++i) bytes+=dpdf_dense_bytes(m->dense[i]);
 for (int i=0;i<21;++i) bytes+=dpdf_convop_bytes(m->conv[i]);
 return bytes;
 }
-int dpdf_model_process(dpdf_model *m,const float *spec,const float *state_in,float *spec_out,float *state_out) {
-    if (!m || !spec || !state_in || !spec_out || !state_out) return -1;
+#define DPDF_SECTION_ARGS dpdf_model *m,float *arena,const float *spec,const float *state_in,float *spec_out,float *state_out
+#define DPDF_SECTION_UNUSED (void)m; (void)arena; (void)spec; (void)state_in; (void)spec_out; (void)state_out
+/* Graph sections, in graph order. Each runs on the arena it is given; the
+ * two-lane schedule runs the DF sections on a private arena. */
+static inline __attribute__((always_inline)) int section_prep(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 0: Mul /Mul */
-for (int i=0;i<962;++i) (m->arena+0)[i]=spec[i]*(m->weights+0)[0];
+for (int i=0;i<962;++i) (arena+0)[i]=spec[i]*(m->weights+0)[0];
 /* 1: Pow /model/Pow */
-for (int i=0;i<962;++i) (m->arena+976)[i]=(m->arena+0)[i]*(m->arena+0)[i];
+for (int i=0;i<962;++i) (arena+976)[i]=(arena+0)[i]*(arena+0)[i];
 /* 2: ReduceSum /model/ReduceSum */
-for (int b=0;b<481;++b) for (int j=0;j<1;++j) { float sum=0; for (int k=0;k<2;++k) sum+=(m->arena+976)[(b*2+k)*1+j]; (m->arena+1952)[b*1+j]=sum; }
+for (int b=0;b<481;++b) for (int j=0;j<1;++j) { float sum=0; for (int k=0;k<2;++k) sum+=(arena+976)[(b*2+k)*1+j]; (arena+1952)[b*1+j]=sum; }
 /* 3: Sqrt /model/Sqrt */
-for (int i=0;i<481;++i) (m->arena+976)[i]=sqrtf((m->arena+1952)[i]);
+for (int i=0;i<481;++i) (arena+976)[i]=sqrtf((arena+1952)[i]);
 /* 4: Add /model/Add */
-for (int i=0;i<481;++i) (m->arena+1472)[i]=(m->arena+976)[i]+(m->weights+6608)[0];
+for (int i=0;i<481;++i) (arena+1472)[i]=(arena+976)[i]+(m->weights+6608)[0];
 /* 5: Log /model/Log */
-for (int i=0;i<481;++i) (m->arena+976)[i]=logf((m->arena+1472)[i]);
+for (int i=0;i<481;++i) (arena+976)[i]=logf((arena+1472)[i]);
 /* 6: Div /model/Div */
-for (int i=0;i<481;++i) (m->arena+1472)[i]=(m->arena+976)[i]/(m->weights+6616)[0];
+for (int i=0;i<481;++i) (arena+1472)[i]=(arena+976)[i]/(m->weights+6616)[0];
 /* 7: Mul /model/Mul */
-for (int i=0;i<481;++i) (m->arena+976)[i]=(m->arena+1472)[i]*(m->weights+6624)[0];
+for (int i=0;i<481;++i) (arena+976)[i]=(arena+1472)[i]*(m->weights+6624)[0];
 /* 8: Slice /model/Slice */
 /* 9: Slice /model/erb_norm/Slice */
 /* 10: Reshape /model/erb_norm/Reshape */
 /* 11: Mul /model/erb_norm/Mul */
-for (int i=0;i<481;++i) (m->arena+1472)[i]=(state_in+0)[i]*(m->weights+6632)[0];
+for (int i=0;i<481;++i) (arena+1472)[i]=(state_in+0)[i]*(m->weights+6632)[0];
 /* 12: Mul /model/erb_norm/Mul_1 */
-for (int i=0;i<481;++i) (m->arena+2448)[i]=(m->arena+976)[i]*(m->weights+6640)[0];
+for (int i=0;i<481;++i) (arena+2448)[i]=(arena+976)[i]*(m->weights+6640)[0];
 /* 13: Add /model/erb_norm/Add */
-for (int i=0;i<481;++i) (m->arena+2944)[i]=(m->arena+1472)[i]+(m->arena+2448)[i];
+for (int i=0;i<481;++i) (arena+2944)[i]=(arena+1472)[i]+(arena+2448)[i];
 /* 14: Reshape /model/erb_norm/Reshape_1 */
 /* 15: Sub /model/erb_norm/Sub */
-for (int i=0;i<481;++i) (m->arena+1472)[i]=(m->arena+976)[i]-(m->arena+2944)[i];
+for (int i=0;i<481;++i) (arena+1472)[i]=(arena+976)[i]-(arena+2944)[i];
 /* 16: Div /model/erb_norm/Div */
-for (int i=0;i<481;++i) (m->arena+976)[i]=(m->arena+1472)[i]/(m->weights+6648)[i];
+for (int i=0;i<481;++i) (arena+976)[i]=(arena+1472)[i]/(m->weights+6648)[i];
 /* 17: Pow /model/spec_norm/Pow */
-for (int i=0;i<192;++i) (m->arena+1472)[i]=((m->arena+0)+0)[i]*((m->arena+0)+0)[i];
+for (int i=0;i<192;++i) (arena+1472)[i]=((arena+0)+0)[i]*((arena+0)+0)[i];
 /* 18: ReduceSum /model/spec_norm/ReduceSum */
-for (int b=0;b<96;++b) for (int j=0;j<1;++j) { float sum=0; for (int k=0;k<2;++k) sum+=(m->arena+1472)[(b*2+k)*1+j]; (m->arena+1664)[b*1+j]=sum; }
+for (int b=0;b<96;++b) for (int j=0;j<1;++j) { float sum=0; for (int k=0;k<2;++k) sum+=(arena+1472)[(b*2+k)*1+j]; (arena+1664)[b*1+j]=sum; }
 /* 19: Sqrt /model/spec_norm/Sqrt */
-for (int i=0;i<96;++i) (m->arena+1472)[i]=sqrtf((m->arena+1664)[i]);
+for (int i=0;i<96;++i) (arena+1472)[i]=sqrtf((arena+1664)[i]);
 /* 20: Slice /model/spec_norm/Slice */
 /* 21: Reshape /model/spec_norm/Reshape */
 /* 22: Mul /model/spec_norm/Mul */
-for (int i=0;i<96;++i) (m->arena+1568)[i]=(state_in+481)[i]*(m->weights+6632)[0];
+for (int i=0;i<96;++i) (arena+1568)[i]=(state_in+481)[i]*(m->weights+6632)[0];
 /* 23: Mul /model/spec_norm/Mul_1 */
-for (int i=0;i<96;++i) (m->arena+1664)[i]=(m->arena+1472)[i]*(m->weights+6640)[0];
+for (int i=0;i<96;++i) (arena+1664)[i]=(arena+1472)[i]*(m->weights+6640)[0];
 /* 24: Add /model/spec_norm/Add */
-for (int i=0;i<96;++i) (m->arena+1472)[i]=(m->arena+1568)[i]+(m->arena+1664)[i];
+for (int i=0;i<96;++i) (arena+1472)[i]=(arena+1568)[i]+(arena+1664)[i];
 /* 25: Add /model/spec_norm/Add_1 */
-for (int i=0;i<96;++i) (m->arena+1568)[i]=(m->arena+1472)[i]+(m->weights+7136)[0];
+for (int i=0;i<96;++i) (arena+1568)[i]=(arena+1472)[i]+(m->weights+7136)[0];
 /* 26: Sqrt /model/spec_norm/Sqrt_1 */
-for (int i=0;i<96;++i) (m->arena+1664)[i]=sqrtf((m->arena+1568)[i]);
+for (int i=0;i<96;++i) (arena+1664)[i]=sqrtf((arena+1568)[i]);
 /* 27: Gather /model/spec_norm/Gather */
-for (int b=0;b<96;++b) memcpy((m->arena+1568)+b*1,((m->arena+0)+0)+(b*2+0)*1,1*sizeof(float));
+for (int b=0;b<96;++b) memcpy((arena+1568)+b*1,((arena+0)+0)+(b*2+0)*1,1*sizeof(float));
 /* 28: Div /model/spec_norm/Div */
-for (int i=0;i<96;++i) (m->arena+1760)[i]=(m->arena+1568)[i]/(m->arena+1664)[i];
+for (int i=0;i<96;++i) (arena+1760)[i]=(arena+1568)[i]/(arena+1664)[i];
 /* 29: Gather /model/spec_norm/Gather_1 */
-for (int b=0;b<96;++b) memcpy((m->arena+1568)+b*1,((m->arena+0)+0)+(b*2+1)*1,1*sizeof(float));
+for (int b=0;b<96;++b) memcpy((arena+1568)+b*1,((arena+0)+0)+(b*2+1)*1,1*sizeof(float));
 /* 30: Div /model/spec_norm/Div_1 */
-for (int i=0;i<96;++i) (m->arena+1856)[i]=(m->arena+1568)[i]/(m->arena+1664)[i];
+for (int i=0;i<96;++i) (arena+1856)[i]=(arena+1568)[i]/(arena+1664)[i];
 /* 31: Unsqueeze /model/spec_norm/Unsqueeze */
 /* 32: Unsqueeze /model/spec_norm/Unsqueeze_1 */
 /* 33: Concat /model/spec_norm/Concat */
-for (int b=0;b<96;++b) memcpy((m->arena+1568)+b*2+0,(m->arena+1760)+b*1,1*sizeof(float));
-for (int b=0;b<96;++b) memcpy((m->arena+1568)+b*2+1,(m->arena+1856)+b*1,1*sizeof(float));
+for (int b=0;b<96;++b) memcpy((arena+1568)+b*2+0,(arena+1760)+b*1,1*sizeof(float));
+for (int b=0;b<96;++b) memcpy((arena+1568)+b*2+1,(arena+1856)+b*1,1*sizeof(float));
 /* 34: Reshape /model/spec_norm/Reshape_1 */
 /* 35: Unsqueeze /model/Unsqueeze */
 /* 36: Unsqueeze /model/Unsqueeze_1 */
+return 0;
+}
+static inline __attribute__((always_inline)) int section_erb_enc(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 37: Transpose /model/enc/erb_conv0_buffer/Transpose */
-memcpy((m->arena+1760)+(0),(m->arena+976)+(0),481*sizeof(float));
+memcpy((arena+1760)+(0),(arena+976)+(0),481*sizeof(float));
 /* 38: Slice /model/enc/erb_conv0_buffer/Slice */
 /* 39: Reshape /model/enc/erb_conv0_buffer/Reshape */
 /* 40: Slice /model/enc/erb_conv0_buffer/Slice_1 */
 /* 41: Concat /model/enc/erb_conv0_buffer/Concat */
 memmove(state_out+577,(state_in+577)+481,962*sizeof(float));
-memcpy(state_out+1539,(m->arena+1760),481*sizeof(float));
+memcpy(state_out+1539,(arena+1760),481*sizeof(float));
 /* 42: Slice /model/enc/erb_conv0_buffer/Slice_2 */
 /* 43: Transpose /model/enc/erb_conv0_buffer/Transpose_1 */
-for (int t2=0;t2<3;++t2) memcpy((m->arena+4896)+(t2*481),((state_out+577)+0)+(t2*481),481*sizeof(float));
+for (int t2=0;t2<3;++t2) memcpy((arena+4896)+(t2*481),((state_out+577)+0)+(t2*481),481*sizeof(float));
 /* 44: Reshape /model/enc/erb_conv0_buffer/Reshape_1 */
 /* 45: Slice /model/enc/Slice */
-for (int i=0;i<1440;++i) (m->arena+6352)[i]=(m->arena+4896)[(0+0*1)*1443+(0+0*1)*1443+(0+((i/480)%3)*1)*481+(0+((i/1)%480)*1)*1];
+for (int i=0;i<1440;++i) (arena+6352)[i]=(arena+4896)[(0+0*1)*1443+(0+0*1)*1443+(0+((i/480)%3)*1)*481+(0+((i/1)%480)*1)*1];
 /* 46: Conv /model/enc/erb_conv0/erb_conv0.1/Conv */
-dpdf_convop_run(m->conv[0],(m->arena+6352),(m->arena+7792));
+dpdf_convop_run(m->conv[0],(arena+6352),(arena+7792));
 /* 47: Relu /model/enc/erb_conv0/erb_conv0.3/Relu */
-for (int i=0;i<30720;++i) (m->arena+38512)[i]=((m->arena+7792)[i]>0?(m->arena+7792)[i]:0.0f);
+for (int i=0;i<30720;++i) (arena+38512)[i]=((arena+7792)[i]>0?(arena+7792)[i]:0.0f);
 /* 48: Conv /model/enc/erb_conv1/erb_conv1.0/Conv */
-dpdf_convop_run(m->conv[1],(m->arena+38512),(m->arena+4896));
+dpdf_convop_run(m->conv[1],(arena+38512),(arena+4896));
 /* 49: Conv /model/enc/erb_conv1/erb_conv1.1/Conv */
-if (dpdf_dense_cm_run(m->dense[0],(const float *const[]){(m->arena+4896)},1,160,(m->arena+4896),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[0],(const float *const[]){(arena+4896)},1,160,(arena+4896),1)) return -1;
 /* 50: Relu /model/enc/erb_conv1/erb_conv1.3/Relu */
 /* 51: Conv /model/enc/erb_conv2/erb_conv2.0/Conv */
-dpdf_convop_run(m->conv[2],(m->arena+4896),(m->arena+69232));
+dpdf_convop_run(m->conv[2],(arena+4896),(arena+69232));
 /* 52: Conv /model/enc/erb_conv2/erb_conv2.1/Conv */
-if (dpdf_dense_cm_run(m->dense[1],(const float *const[]){(m->arena+69232)},1,80,(m->arena+69232),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[1],(const float *const[]){(arena+69232)},1,80,(arena+69232),1)) return -1;
 /* 53: Relu /model/enc/erb_conv2/erb_conv2.3/Relu */
 /* 54: Conv /model/enc/erb_conv3/erb_conv3.0/Conv */
-dpdf_convop_run(m->conv[3],(m->arena+69232),(m->arena+74352));
+dpdf_convop_run(m->conv[3],(arena+69232),(arena+74352));
 /* 55: Conv /model/enc/erb_conv3/erb_conv3.1/Conv */
-if (dpdf_dense_cm_run(m->dense[2],(const float *const[]){(m->arena+74352)},1,40,(m->arena+74352),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[2],(const float *const[]){(arena+74352)},1,40,(arena+74352),1)) return -1;
 /* 56: Relu /model/enc/erb_conv3/erb_conv3.3/Relu */
 /* 57: Slice /model/enc/dprnn_erb/blocks.0/inter_gru/Slice */
 /* 58: DpdfDprnn /model/enc/dprnn_erb/blocks.0/Native */
-if (dpdf_process_layout(m->blocks[0],(m->arena+74352),(state_in+2020),(m->arena+76912),state_out+2020,2)) return -1;
+if (dpdf_process_layout(m->blocks[0],(arena+74352),(state_in+2020),(arena+76912),state_out+2020,2)) return -1;
 /* 59: Slice /model/enc/dprnn_erb/blocks.1/inter_gru/Slice */
 /* 60: DpdfDprnn /model/enc/dprnn_erb/blocks.1/Native */
-if (dpdf_process_layout(m->blocks[1],(m->arena+76912),(state_in+4580),(m->arena+17696),state_out+4580,1)) return -1;
+if (dpdf_process_layout(m->blocks[1],(arena+76912),(state_in+4580),(arena+17696),state_out+4580,1)) return -1;
+return 0;
+}
+static inline __attribute__((always_inline)) int section_df_enc(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 61: Transpose /model/enc/df_conv0_buffer/Transpose */
-for (int t2=0;t2<2;++t2) for (int t3=0;t3<96;++t3) (m->arena+976)[t2*96+t3*1]=(m->arena+1568)[t2*1+t3*2];
+for (int t2=0;t2<2;++t2) for (int t3=0;t3<96;++t3) (arena+976)[t2*96+t3*1]=(arena+1568)[t2*1+t3*2];
 /* 62: Slice /model/enc/df_conv0_buffer/Slice */
 /* 63: Reshape /model/enc/df_conv0_buffer/Reshape */
 /* 64: Slice /model/enc/df_conv0_buffer/Slice_1 */
 /* 65: Concat /model/enc/df_conv0_buffer/Concat */
 memmove(state_out+7140,(state_in+7140)+192,384*sizeof(float));
-memcpy(state_out+7524,(m->arena+976),192*sizeof(float));
+memcpy(state_out+7524,(arena+976),192*sizeof(float));
 /* 66: Slice /model/enc/df_conv0_buffer/Slice_2 */
 /* 67: Transpose /model/enc/df_conv0_buffer/Transpose_1 */
-for (int t1=0;t1<2;++t1) for (int t2=0;t2<3;++t2) memcpy((m->arena+2144)+(t1*288+t2*96),((state_out+7140)+0)+(t1*96+t2*192),96*sizeof(float));
+for (int t1=0;t1<2;++t1) for (int t2=0;t2<3;++t2) memcpy((arena+2144)+(t1*288+t2*96),((state_out+7140)+0)+(t1*96+t2*192),96*sizeof(float));
 /* 68: Reshape /model/enc/df_conv0_buffer/Reshape_1 */
 /* 69: Slice /model/enc/df_conv0/df_conv0.1/Slice */
 /* 70: Slice /model/enc/df_conv0/df_conv0.1/Slice_1 */
 /* 71: Conv /model/enc/df_conv0/df_conv0.1/convs.0/Conv */
-dpdf_convop_run(m->conv[4],((m->arena+2144)+0),(m->arena+22816));
+dpdf_convop_run(m->conv[4],((arena+2144)+0),(arena+22816));
 /* 72: Conv /model/enc/df_conv0/df_conv0.1/convs.1/Conv */
-dpdf_convop_run(m->conv[5],((m->arena+2144)+288),(m->arena+25888));
+dpdf_convop_run(m->conv[5],((arena+2144)+288),(arena+25888));
 /* 73: Concat /model/enc/df_conv0/df_conv0.1/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+28960)+b*6144+0,(m->arena+22816)+b*3072,3072*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+28960)+b*6144+3072,(m->arena+25888)+b*3072,3072*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+28960)+b*6144+0,(arena+22816)+b*3072,3072*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+28960)+b*6144+3072,(arena+25888)+b*3072,3072*sizeof(float));
 /* 74: Conv /model/enc/df_conv0/df_conv0.2/Conv */
-if (dpdf_dense_cm_run(m->dense[3],(const float *const[]){(m->arena+28960)},1,96,(m->arena+28960),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[3],(const float *const[]){(arena+28960)},1,96,(arena+28960),1)) return -1;
 /* 75: Relu /model/enc/df_conv0/df_conv0.4/Relu */
 /* 76: Conv /model/enc/df_conv1/df_conv1.0/Conv */
-dpdf_convop_run(m->conv[6],(m->arena+28960),(m->arena+35104));
+dpdf_convop_run(m->conv[6],(arena+28960),(arena+35104));
 /* 77: Conv /model/enc/df_conv1/df_conv1.1/Conv */
-if (dpdf_dense_cm_run(m->dense[4],(const float *const[]){(m->arena+35104)},1,48,(m->arena+25888),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[4],(const float *const[]){(arena+35104)},1,48,(arena+25888),1)) return -1;
 /* 78: Relu /model/enc/df_conv1/df_conv1.3/Relu */
 /* 79: Slice /model/enc/dprnn_df/blocks.0/inter_gru/Slice */
 /* 80: DpdfDprnn /model/enc/dprnn_df/blocks.0/Native */
-if (dpdf_process_layout(m->blocks[2],(m->arena+25888),(state_in+7716),(m->arena+22816),state_out+7716,2)) return -1;
+if (dpdf_process_layout(m->blocks[2],(arena+25888),(state_in+7716),(arena+22816),state_out+7716,2)) return -1;
 /* 81: Slice /model/enc/dprnn_df/blocks.1/inter_gru/Slice */
 /* 82: DpdfDprnn /model/enc/dprnn_df/blocks.1/Native */
-if (dpdf_process_layout(m->blocks[3],(m->arena+22816),(state_in+10788),(m->arena+25888),state_out+10788,1)) return -1;
+if (dpdf_process_layout(m->blocks[3],(arena+22816),(state_in+10788),(arena+25888),state_out+10788,1)) return -1;
+return 0;
+}
+static inline __attribute__((always_inline)) int section_df_emb(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 83: Transpose /model/enc/Transpose */
-for (int t2=0;t2<48;++t2) for (int t3=0;t3<64;++t3) (m->arena+22816)[t2*64+t3*1]=(m->arena+25888)[t2*1+t3*48];
+for (int t2=0;t2<48;++t2) for (int t3=0;t3<64;++t3) (arena+22816)[t2*64+t3*1]=(arena+25888)[t2*1+t3*48];
 /* 84: Flatten /model/enc/Flatten */
 /* 85: Reshape /model/enc/df_fc_emb/df_fc_emb.0/Reshape */
 /* 86: Unsqueeze /model/enc/df_fc_emb/df_fc_emb.0/Unsqueeze */
 /* 87: MatMul /model/enc/df_fc_emb/df_fc_emb.0/MatMul */
-for (int g=0;g<32;++g) dpdf_dense_run(m->dense[5+g],(m->arena+22816)+g*96,(m->arena+2144)+g*16,1);
+for (int g=0;g<32;++g) dpdf_dense_run(m->dense[5+g],(arena+22816)+g*96,(arena+2144)+g*16,1);
 /* 88: Squeeze /model/enc/df_fc_emb/df_fc_emb.0/Squeeze */
 /* 89: Reshape /model/enc/df_fc_emb/df_fc_emb.0/Reshape_1 */
 /* 90: Add /model/enc/df_fc_emb/df_fc_emb.0/Add */
 /* 91: Relu /model/enc/df_fc_emb/df_fc_emb.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<512;++i) { float value=(m->arena+2144)[i]+(m->weights+528)[i]; (m->arena+2144)[i]=value>0?value:0.0f; }
+for (int i=0;i<512;++i) { float value=(arena+2144)[i]+(m->weights+528)[i]; (arena+2144)[i]=value>0?value:0.0f; }
+return 0;
+}
+static inline __attribute__((always_inline)) int section_erb_emb(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 92: Transpose /model/enc/Transpose_1 */
-for (int t2=0;t2<40;++t2) for (int t3=0;t3<64;++t3) (m->arena+22816)[t2*64+t3*1]=(m->arena+17696)[t2*1+t3*40];
+for (int t2=0;t2<40;++t2) for (int t3=0;t3<64;++t3) (arena+22816)[t2*64+t3*1]=(arena+17696)[t2*1+t3*40];
 /* 93: Flatten /model/enc/Flatten_1 */
 /* 94: Reshape /model/enc/erb_fc_emb/erb_fc_emb.0/Reshape */
 /* 95: Unsqueeze /model/enc/erb_fc_emb/erb_fc_emb.0/Unsqueeze */
 /* 96: MatMul /model/enc/erb_fc_emb/erb_fc_emb.0/MatMul */
-for (int g=0;g<32;++g) dpdf_dense_run(m->dense[37+g],(m->arena+22816)+g*80,(m->arena+17696)+g*16,1);
+for (int g=0;g<32;++g) dpdf_dense_run(m->dense[37+g],(arena+22816)+g*80,(arena+17696)+g*16,1);
 /* 97: Squeeze /model/enc/erb_fc_emb/erb_fc_emb.0/Squeeze */
 /* 98: Reshape /model/enc/erb_fc_emb/erb_fc_emb.0/Reshape_1 */
 /* 99: Add /model/enc/erb_fc_emb/erb_fc_emb.0/Add */
 /* 100: Relu /model/enc/erb_fc_emb/erb_fc_emb.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<512;++i) { float value=(m->arena+17696)[i]+(m->weights+16)[i]; (m->arena+17696)[i]=value>0?value:0.0f; }
+for (int i=0;i<512;++i) { float value=(arena+17696)[i]+(m->weights+16)[i]; (arena+17696)[i]=value>0?value:0.0f; }
+return 0;
+}
+static inline __attribute__((always_inline)) int section_combine(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 101: Concat /model/enc/combine/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+18208)+b*1024+0,(m->arena+17696)+b*512,512*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+18208)+b*1024+512,(m->arena+2144)+b*512,512*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+18208)+b*1024+0,(arena+17696)+b*512,512*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+18208)+b*1024+512,(arena+2144)+b*512,512*sizeof(float));
 /* 102: Reshape /model/enc/emb_gru/linear_in/linear_in.0/Reshape */
 /* 103: Unsqueeze /model/enc/emb_gru/linear_in/linear_in.0/Unsqueeze */
 /* 104: MatMul /model/enc/emb_gru/linear_in/linear_in.0/MatMul */
-for (int g=0;g<16;++g) dpdf_dense_run(m->dense[69+g],(m->arena+18208)+g*64,(m->arena+38176)+g*16,1);
+for (int g=0;g<16;++g) dpdf_dense_run(m->dense[69+g],(arena+18208)+g*64,(arena+38176)+g*16,1);
 /* 105: Squeeze /model/enc/emb_gru/linear_in/linear_in.0/Squeeze */
 /* 106: Reshape /model/enc/emb_gru/linear_in/linear_in.0/Reshape_1 */
 /* 107: Add /model/enc/emb_gru/linear_in/linear_in.0/Add */
 /* 108: Relu /model/enc/emb_gru/linear_in/linear_in.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<256;++i) { float value=(m->arena+38176)[i]+(m->weights+1040)[i]; (m->arena+38176)[i]=value>0?value:0.0f; }
+for (int i=0;i<256;++i) { float value=(arena+38176)[i]+(m->weights+1040)[i]; (arena+38176)[i]=value>0?value:0.0f; }
 /* 109: Slice /model/enc/emb_gru/gru.0/Slice */
 /* 110: Reshape /model/enc/emb_gru/gru.0/Reshape */
 /* fused generated GRU /model/enc/emb_gru/gru.0/grucell/: separate FP32 operations. */
 {
     float graph_a[768],graph_b[768];
-    dpdf_dense_run(m->dense[85],(m->arena+38176),graph_a,1);
+    dpdf_dense_run(m->dense[85],(arena+38176),graph_a,1);
     dpdf_dense_run(m->dense[86],(state_in+13860),graph_b,1);
-    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+13860),(m->arena+976));
+    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+13860),(arena+976));
 }
 /* 125: Reshape /model/enc/emb_gru/gru.0/Reshape_1 */
 /* 126: Reshape /model/enc/emb_gru/linear_out/linear_out.0/Reshape */
 /* 127: Unsqueeze /model/enc/emb_gru/linear_out/linear_out.0/Unsqueeze */
 /* 128: MatMul /model/enc/emb_gru/linear_out/linear_out.0/MatMul */
-for (int g=0;g<16;++g) dpdf_dense_run(m->dense[87+g],(m->arena+976)+g*16,(m->arena+2144)+g*32,1);
+for (int g=0;g<16;++g) dpdf_dense_run(m->dense[87+g],(arena+976)+g*16,(arena+2144)+g*32,1);
 /* 129: Squeeze /model/enc/emb_gru/linear_out/linear_out.0/Squeeze */
 /* 130: Reshape /model/enc/emb_gru/linear_out/linear_out.0/Reshape_1 */
 /* 131: Add /model/enc/emb_gru/linear_out/linear_out.0/Add */
 /* 132: Relu /model/enc/emb_gru/linear_out/linear_out.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<512;++i) { float value=(m->arena+2144)[i]+(m->weights+1296)[i]; (m->arena+2144)[i]=value>0?value:0.0f; }
+for (int i=0;i<512;++i) { float value=(arena+2144)[i]+(m->weights+1296)[i]; (arena+2144)[i]=value>0?value:0.0f; }
+return 0;
+}
+static inline __attribute__((always_inline)) int section_erb_dec(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 133: Reshape /model/erb_dec/emb_gru/linear_in/linear_in.0/Reshape */
 /* 134: Unsqueeze /model/erb_dec/emb_gru/linear_in/linear_in.0/Unsqueeze */
 /* 135: MatMul /model/erb_dec/emb_gru/linear_in/linear_in.0/MatMul */
-for (int g=0;g<16;++g) dpdf_dense_run(m->dense[103+g],(m->arena+2144)+g*32,(m->arena+2656)+g*16,1);
+for (int g=0;g<16;++g) dpdf_dense_run(m->dense[103+g],(arena+2144)+g*32,(arena+2656)+g*16,1);
 /* 136: Squeeze /model/erb_dec/emb_gru/linear_in/linear_in.0/Squeeze */
 /* 137: Reshape /model/erb_dec/emb_gru/linear_in/linear_in.0/Reshape_1 */
 /* 138: Add /model/erb_dec/emb_gru/linear_in/linear_in.0/Add */
 /* 139: Relu /model/erb_dec/emb_gru/linear_in/linear_in.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<256;++i) { float value=(m->arena+2656)[i]+(m->weights+1808)[i]; (m->arena+2656)[i]=value>0?value:0.0f; }
+for (int i=0;i<256;++i) { float value=(arena+2656)[i]+(m->weights+1808)[i]; (arena+2656)[i]=value>0?value:0.0f; }
 /* 140: Slice /model/erb_dec/emb_gru/gru.0/Slice */
 /* 141: Reshape /model/erb_dec/emb_gru/gru.0/Reshape */
 /* fused generated GRU /model/erb_dec/emb_gru/gru.0/grucell/: separate FP32 operations. */
 {
     float graph_a[768],graph_b[768];
-    dpdf_dense_run(m->dense[119],(m->arena+2656),graph_a,1);
+    dpdf_dense_run(m->dense[119],(arena+2656),graph_a,1);
     dpdf_dense_run(m->dense[120],(state_in+14116),graph_b,1);
-    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14116),(m->arena+38176));
+    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14116),(arena+38176));
 }
 /* 156: Reshape /model/erb_dec/emb_gru/gru.0/Reshape_1 */
 /* 157: Slice /model/erb_dec/emb_gru/gru.1/Slice */
@@ -533,101 +576,105 @@ for (int i=0;i<256;++i) { float value=(m->arena+2656)[i]+(m->weights+1808)[i]; (
 /* fused generated GRU /model/erb_dec/emb_gru/gru.1/grucell/: separate FP32 operations. */
 {
     float graph_a[768],graph_b[768];
-    dpdf_dense_run(m->dense[121],(m->arena+38176),graph_a,1);
+    dpdf_dense_run(m->dense[121],(arena+38176),graph_a,1);
     dpdf_dense_run(m->dense[122],(state_in+14372),graph_b,1);
-    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14372),(m->arena+20000));
+    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14372),(arena+20000));
 }
 /* 173: Reshape /model/erb_dec/emb_gru/gru.1/Reshape_1 */
 /* 174: Reshape /model/erb_dec/emb_gru/linear_out/linear_out.0/Reshape */
 /* 175: Unsqueeze /model/erb_dec/emb_gru/linear_out/linear_out.0/Unsqueeze */
 /* 176: MatMul /model/erb_dec/emb_gru/linear_out/linear_out.0/MatMul */
-for (int g=0;g<16;++g) dpdf_dense_run(m->dense[123+g],(m->arena+20000)+g*16,(m->arena+17696)+g*32,1);
+for (int g=0;g<16;++g) dpdf_dense_run(m->dense[123+g],(arena+20000)+g*16,(arena+17696)+g*32,1);
 /* 177: Squeeze /model/erb_dec/emb_gru/linear_out/linear_out.0/Squeeze */
 /* 178: Reshape /model/erb_dec/emb_gru/linear_out/linear_out.0/Reshape_1 */
 /* 179: Add /model/erb_dec/emb_gru/linear_out/linear_out.0/Add */
 /* 180: Relu /model/erb_dec/emb_gru/linear_out/linear_out.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<512;++i) { float value=(m->arena+17696)[i]+(m->weights+2064)[i]; (m->arena+17696)[i]=value>0?value:0.0f; }
+for (int i=0;i<512;++i) { float value=(arena+17696)[i]+(m->weights+2064)[i]; (arena+17696)[i]=value>0?value:0.0f; }
 /* 181: Reshape /model/erb_dec/erb_fc_emb/erb_fc_emb.0/Reshape */
 /* 182: Unsqueeze /model/erb_dec/erb_fc_emb/erb_fc_emb.0/Unsqueeze */
 /* 183: MatMul /model/erb_dec/erb_fc_emb/erb_fc_emb.0/MatMul */
-for (int g=0;g<32;++g) dpdf_dense_run(m->dense[139+g],(m->arena+17696)+g*16,(m->arena+22816)+g*80,1);
+for (int g=0;g<32;++g) dpdf_dense_run(m->dense[139+g],(arena+17696)+g*16,(arena+22816)+g*80,1);
 /* 184: Squeeze /model/erb_dec/erb_fc_emb/erb_fc_emb.0/Squeeze */
 /* 185: Reshape /model/erb_dec/erb_fc_emb/erb_fc_emb.0/Reshape_1 */
 /* 186: Add /model/erb_dec/erb_fc_emb/erb_fc_emb.0/Add */
 /* 187: Relu /model/erb_dec/erb_fc_emb/erb_fc_emb.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<2560;++i) { float value=(m->arena+22816)[i]+(m->weights+2576)[i]; (m->arena+22816)[i]=value>0?value:0.0f; }
+for (int i=0;i<2560;++i) { float value=(arena+22816)[i]+(m->weights+2576)[i]; (arena+22816)[i]=value>0?value:0.0f; }
 /* 188: Reshape /model/erb_dec/Reshape */
 /* 189: Transpose /model/erb_dec/Transpose */
-for (int t1=0;t1<64;++t1) for (int t3=0;t3<40;++t3) (m->arena+25376)[t1*40+t3*1]=(m->arena+22816)[t1*1+t3*64];
+for (int t1=0;t1<64;++t1) for (int t3=0;t3<40;++t3) (arena+25376)[t1*40+t3*1]=(arena+22816)[t1*1+t3*64];
 /* 190: Conv /model/erb_dec/conv3p/conv3p.0/Conv */
-dpdf_convop_run(m->conv[7],(m->arena+74352),(m->arena+22816));
+dpdf_convop_run(m->conv[7],(arena+74352),(arena+22816));
 /* 191: Relu /model/erb_dec/conv3p/conv3p.2/Relu */
 /* 192: Add /model/erb_dec/Add */
-for (int i=0;i<2560;++i) { float v=((m->arena+22816)[i]>0?(m->arena+22816)[i]:0.0f); (m->arena+22816)[i]=v+(m->arena+25376)[i]; }
+for (int i=0;i<2560;++i) { float v=((arena+22816)[i]>0?(arena+22816)[i]:0.0f); (arena+22816)[i]=v+(arena+25376)[i]; }
 /* 193: Conv /model/erb_dec/convt3/convt3.0/convs.0/Conv */
-dpdf_convop_run(m->conv[8],(m->arena+22816),(m->arena+74352));
+dpdf_convop_run(m->conv[8],(arena+22816),(arena+74352));
 /* 194: Conv /model/erb_dec/convt3/convt3.0/convs.1/Conv */
-dpdf_convop_run(m->conv[9],(m->arena+22816),(m->arena+25376));
+dpdf_convop_run(m->conv[9],(arena+22816),(arena+25376));
 /* 199: Conv /model/erb_dec/convt3/convt3.1/Conv */
-if (dpdf_dense_cm_run(m->dense[171],(const float *const[]){(m->arena+74352),(m->arena+25376)},2,40,(m->arena+22816),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[171],(const float *const[]){(arena+74352),(arena+25376)},2,40,(arena+22816),1)) return -1;
 /* 200: Relu /model/erb_dec/convt3/convt3.3/Relu */
 /* 201: Conv /model/erb_dec/conv2p/conv2p.0/Conv */
-dpdf_convop_run(m->conv[10],(m->arena+69232),(m->arena+79984));
+dpdf_convop_run(m->conv[10],(arena+69232),(arena+79984));
 /* 202: Relu /model/erb_dec/conv2p/conv2p.2/Relu */
 /* 203: Add /model/erb_dec/Add_1 */
-for (int i=0;i<5120;++i) { float v=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f); (m->arena+79984)[i]=v+(m->arena+22816)[i]; }
+for (int i=0;i<5120;++i) { float v=((arena+79984)[i]>0?(arena+79984)[i]:0.0f); (arena+79984)[i]=v+(arena+22816)[i]; }
 /* 204: Conv /model/erb_dec/convt2/convt2.0/convs.0/Conv */
-dpdf_convop_run(m->conv[11],(m->arena+79984),(m->arena+22816));
+dpdf_convop_run(m->conv[11],(arena+79984),(arena+22816));
 /* 205: Conv /model/erb_dec/convt2/convt2.0/convs.1/Conv */
-dpdf_convop_run(m->conv[12],(m->arena+79984),(m->arena+69232));
+dpdf_convop_run(m->conv[12],(arena+79984),(arena+69232));
 /* 210: Conv /model/erb_dec/convt2/convt2.1/Conv */
-if (dpdf_dense_cm_run(m->dense[172],(const float *const[]){(m->arena+22816),(m->arena+69232)},2,80,(m->arena+90224),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[172],(const float *const[]){(arena+22816),(arena+69232)},2,80,(arena+90224),1)) return -1;
 /* 211: Relu /model/erb_dec/convt2/convt2.3/Relu */
 /* 212: Conv /model/erb_dec/conv1p/conv1p.0/Conv */
-dpdf_convop_run(m->conv[13],(m->arena+4896),(m->arena+79984));
+dpdf_convop_run(m->conv[13],(arena+4896),(arena+79984));
 /* 213: Relu /model/erb_dec/conv1p/conv1p.2/Relu */
 /* 214: Add /model/erb_dec/Add_2 */
-for (int i=0;i<10240;++i) { float v=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f); (m->arena+79984)[i]=v+(m->arena+90224)[i]; }
+for (int i=0;i<10240;++i) { float v=((arena+79984)[i]>0?(arena+79984)[i]:0.0f); (arena+79984)[i]=v+(arena+90224)[i]; }
 /* 215: Conv /model/erb_dec/convt1/convt1.0/convs.0/Conv */
-dpdf_convop_run(m->conv[14],(m->arena+79984),(m->arena+4896));
+dpdf_convop_run(m->conv[14],(arena+79984),(arena+4896));
 /* 216: Conv /model/erb_dec/convt1/convt1.0/convs.1/Conv */
-dpdf_convop_run(m->conv[15],(m->arena+79984),(m->arena+90224));
+dpdf_convop_run(m->conv[15],(arena+79984),(arena+90224));
 /* 217: Conv /model/erb_dec/convt1/convt1.0/convs.2/Conv */
-dpdf_convop_run(m->conv[16],(m->arena+79984),(m->arena+100464));
+dpdf_convop_run(m->conv[16],(arena+79984),(arena+100464));
 /* 222: Conv /model/erb_dec/convt1/convt1.1/Conv */
-if (dpdf_dense_cm_run(m->dense[173],(const float *const[]){(m->arena+4896),(m->arena+90224),(m->arena+100464)},3,160,(m->arena+79984),1)) return -1;
+if (dpdf_dense_cm_run(m->dense[173],(const float *const[]){(arena+4896),(arena+90224),(arena+100464)},3,160,(arena+79984),1)) return -1;
 /* 223: Relu /model/erb_dec/convt1/convt1.3/Relu */
 /* 224: Conv /model/erb_dec/conv0p/conv0p.0/Conv */
-dpdf_convop_run(m->conv[17],(m->arena+38512),(m->arena+110704));
+dpdf_convop_run(m->conv[17],(arena+38512),(arena+110704));
 /* 225: Relu /model/erb_dec/conv0p/conv0p.2/Relu */
 /* 226: Add /model/erb_dec/Add_3 */
-for (int i=0;i<30720;++i) { float v=((m->arena+110704)[i]>0?(m->arena+110704)[i]:0.0f); (m->arena+110704)[i]=v+(m->arena+79984)[i]; }
+for (int i=0;i<30720;++i) { float v=((arena+110704)[i]>0?(arena+110704)[i]:0.0f); (arena+110704)[i]=v+(arena+79984)[i]; }
 /* 227: Conv /model/erb_dec/conv0_out/conv0_out.0/Conv */
-dpdf_convop_run(m->conv[18],(m->arena+110704),(m->arena+17696));
+dpdf_convop_run(m->conv[18],(arena+110704),(arena+17696));
 /* 228: Sigmoid /model/erb_dec/conv0_out/conv0_out.2/Sigmoid */
-for (int i=0;i<480;++i) (m->arena+18176)[i]=1.0f/(1.0f+expf(-(m->arena+17696)[i]));
+for (int i=0;i<480;++i) (arena+18176)[i]=1.0f/(1.0f+expf(-(arena+17696)[i]));
 /* 229: Pad /model/erb_dec/Pad */
-for (int b=0;b<1;++b) { memcpy((m->arena+18656)+b*481,(m->arena+18176)+b*480,480*sizeof(float)); (m->arena+18656)[b*481+480]=(m->arena+18176)[b*480+478]; }
+for (int b=0;b<1;++b) { memcpy((arena+18656)+b*481,(arena+18176)+b*480,480*sizeof(float)); (arena+18656)[b*481+480]=(arena+18176)[b*480+478]; }
+return 0;
+}
+static inline __attribute__((always_inline)) int section_df_dec(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 230: Reshape /model/df_dec/df_gru/linear_in/linear_in.0/Reshape */
 /* 231: Unsqueeze /model/df_dec/df_gru/linear_in/linear_in.0/Unsqueeze */
 /* 232: MatMul /model/df_dec/df_gru/linear_in/linear_in.0/MatMul */
-for (int g=0;g<8;++g) dpdf_dense_run(m->dense[174+g],(m->arena+2144)+g*64,(m->arena+2656)+g*32,1);
+for (int g=0;g<8;++g) dpdf_dense_run(m->dense[174+g],(arena+2144)+g*64,(arena+2656)+g*32,1);
 /* 233: Squeeze /model/df_dec/df_gru/linear_in/linear_in.0/Squeeze */
 /* 234: Reshape /model/df_dec/df_gru/linear_in/linear_in.0/Reshape_1 */
 /* 235: Add /model/df_dec/df_gru/linear_in/linear_in.0/Add */
 /* 236: Relu /model/df_dec/df_gru/linear_in/linear_in.1/Relu */
 /*  retain the rounded addition and comparison semantics. */
-for (int i=0;i<256;++i) { float value=(m->arena+2656)[i]+(m->weights+5136)[i]; (m->arena+2656)[i]=value>0?value:0.0f; }
+for (int i=0;i<256;++i) { float value=(arena+2656)[i]+(m->weights+5136)[i]; (arena+2656)[i]=value>0?value:0.0f; }
 /* 237: Slice /model/df_dec/df_gru/gru.0/Slice */
 /* 238: Reshape /model/df_dec/df_gru/gru.0/Reshape */
 /* fused generated GRU /model/df_dec/df_gru/gru.0/grucell/: separate FP32 operations. */
 {
     float graph_a[768],graph_b[768];
-    dpdf_dense_run(m->dense[182],(m->arena+2656),graph_a,1);
+    dpdf_dense_run(m->dense[182],(arena+2656),graph_a,1);
     dpdf_dense_run(m->dense[183],(state_in+14628),graph_b,1);
-    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14628),(m->arena+17696));
+    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14628),(arena+17696));
 }
 /* 253: Reshape /model/df_dec/df_gru/gru.0/Reshape_1 */
 /* 254: Slice /model/df_dec/df_gru/gru.1/Slice */
@@ -635,154 +682,256 @@ for (int i=0;i<256;++i) { float value=(m->arena+2656)[i]+(m->weights+5136)[i]; (
 /* fused generated GRU /model/df_dec/df_gru/gru.1/grucell/: separate FP32 operations. */
 {
     float graph_a[768],graph_b[768];
-    dpdf_dense_run(m->dense[184],(m->arena+17696),graph_a,1);
+    dpdf_dense_run(m->dense[184],(arena+17696),graph_a,1);
     dpdf_dense_run(m->dense[185],(state_in+14884),graph_b,1);
-    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14884),(m->arena+19408));
+    dpdf_generated_gru256_fused(graph_a,graph_b,(state_in+14884),(arena+19408));
 }
 /* 270: Reshape /model/df_dec/df_gru/gru.1/Reshape_1 */
 /* 271: MatMul /model/df_dec/df_skip/MatMul */
-for (int g=0;g<16;++g) dpdf_dense_run(m->dense[186+g],(m->arena+2144)+g*32,(m->arena+19152)+g*16,1);
+for (int g=0;g<16;++g) dpdf_dense_run(m->dense[186+g],(arena+2144)+g*32,(arena+19152)+g*16,1);
 /* 272: Squeeze /model/df_dec/df_skip/Squeeze */
 /* 273: Reshape /model/df_dec/df_skip/Reshape_1 */
 /* 274: Add /model/df_dec/df_skip/Add */
-for (int i=0;i<256;++i) (m->arena+19664)[i]=(m->arena+19152)[i]+(m->weights+5392)[((i/1)%256)*1];
+for (int i=0;i<256;++i) (arena+19664)[i]=(arena+19152)[i]+(m->weights+5392)[((i/1)%256)*1];
 /* 275: Add /model/df_dec/Add */
-for (int i=0;i<256;++i) (m->arena+19152)[i]=(m->arena+19408)[i]+(m->arena+19664)[i];
+for (int i=0;i<256;++i) (arena+19152)[i]=(arena+19408)[i]+(arena+19664)[i];
 /* 276: Transpose /model/df_dec/df_convp_buffer/Transpose */
-for (int t2=0;t2<64;++t2) memcpy((m->arena+22816)+(t2*96),(m->arena+28960)+(t2*96),96*sizeof(float));
+for (int t2=0;t2<64;++t2) memcpy((arena+22816)+(t2*96),(arena+28960)+(t2*96),96*sizeof(float));
 /* 277: Slice /model/df_dec/df_convp_buffer/Slice */
 /* 278: Reshape /model/df_dec/df_convp_buffer/Reshape */
 /* 279: Slice /model/df_dec/df_convp_buffer/Slice_1 */
 /* 280: Concat /model/df_dec/df_convp_buffer/Concat */
 memmove(state_out+15140,(state_in+15140)+6144,24576*sizeof(float));
-memcpy(state_out+39716,(m->arena+22816),6144*sizeof(float));
+memcpy(state_out+39716,(arena+22816),6144*sizeof(float));
 /* 281: Slice /model/df_dec/df_convp_buffer/Slice_2 */
 /* 282: Transpose /model/df_dec/df_convp_buffer/Transpose_1 */
-for (int t1=0;t1<64;++t1) for (int t2=0;t2<5;++t2) memcpy((m->arena+79984)+(t1*480+t2*96),((state_out+15140)+0)+(t1*96+t2*6144),96*sizeof(float));
+for (int t1=0;t1<64;++t1) for (int t2=0;t2<5;++t2) memcpy((arena+79984)+(t1*480+t2*96),((state_out+15140)+0)+(t1*96+t2*6144),96*sizeof(float));
 /* 283: Reshape /model/df_dec/df_convp_buffer/Reshape_1 */
 /* 284: Slice /model/df_dec/df_convp/df_convp.1/Slice */
 /* 285: Slice /model/df_dec/df_convp/df_convp.1/Slice_1 */
 /* 286: Conv /model/df_dec/df_convp/df_convp.1/convs.0/Conv */
-dpdf_convop_run(m->conv[19],((m->arena+79984)+0),(m->arena+17952));
+dpdf_convop_run(m->conv[19],((arena+79984)+0),(arena+17952));
 /* 287: Conv /model/df_dec/df_convp/df_convp.1/convs.1/Conv */
-dpdf_convop_run(m->conv[20],((m->arena+79984)+15360),(m->arena+2144));
+dpdf_convop_run(m->conv[20],((arena+79984)+15360),(arena+2144));
 /* 288: Concat /model/df_dec/df_convp/df_convp.1/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+0,(m->arena+17952)+b*480,480*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+480,(m->arena+2144)+b*480,480*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+69152)+b*960+0,(arena+17952)+b*480,480*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+69152)+b*960+480,(arena+2144)+b*480,480*sizeof(float));
 /* 289: Conv /model/df_dec/df_convp/df_convp.2/Conv */
-dpdf_transpose_avx2((m->arena+69152),(m->arena+71072),10,96,0);
-dpdf_dense_run(m->dense[202],(m->arena+71072),(m->arena+72032),96);
-dpdf_transpose_avx2((m->arena+72032),(m->arena+69152),96,10,1);
+dpdf_transpose_avx2((arena+69152),(arena+71072),10,96,0);
+dpdf_dense_run(m->dense[202],(arena+71072),(arena+72032),96);
+dpdf_transpose_avx2((arena+72032),(arena+69152),96,10,1);
 /* 290: Relu /model/df_dec/df_convp/df_convp.4/Relu */
 /* 291: Transpose /model/df_dec/Transpose */
-for (int t2=0;t2<96;++t2) for (int t3=0;t3<10;++t3) (m->arena+70112)[t2*10+t3*1]=(m->arena+69152)[t2*1+t3*96];
+for (int t2=0;t2<96;++t2) for (int t3=0;t3<10;++t3) (arena+70112)[t2*10+t3*1]=(arena+69152)[t2*1+t3*96];
 /* 292: Reshape /model/df_dec/df_out/df_out.0/Reshape */
 /* 293: Unsqueeze /model/df_dec/df_out/df_out.0/Unsqueeze */
 /* 294: MatMul /model/df_dec/df_out/df_out.0/MatMul */
-for (int g=0;g<16;++g) dpdf_dense_run(m->dense[203+g],(m->arena+19152)+g*16,(m->arena+69152)+g*60,1);
+for (int g=0;g<16;++g) dpdf_dense_run(m->dense[203+g],(arena+19152)+g*16,(arena+69152)+g*60,1);
 /* 295: Squeeze /model/df_dec/df_out/df_out.0/Squeeze */
 /* 296: Reshape /model/df_dec/df_out/df_out.0/Reshape_1 */
 /* 297: Add /model/df_dec/df_out/df_out.0/Add */
-for (int i=0;i<960;++i) (m->arena+71072)[i]=(m->arena+69152)[i]+(m->weights+5648)[((i/1)%960)*1];
+for (int i=0;i<960;++i) (arena+71072)[i]=(arena+69152)[i]+(m->weights+5648)[((i/1)%960)*1];
 /* 298: Tanh /model/df_dec/df_out/df_out.1/Tanh */
-for (int i=0;i<960;++i) (m->arena+69152)[i]=tanhf((m->arena+71072)[i]);
+for (int i=0;i<960;++i) (arena+69152)[i]=tanhf((arena+71072)[i]);
 /* 299: Unsqueeze /model/df_dec/Unsqueeze */
 /* 300: Reshape /model/df_dec/Reshape */
 /* 301: Add /model/df_dec/Add_1 */
-for (int i=0;i<960;++i) (m->arena+71072)[i]=(m->arena+69152)[i]+(m->arena+70112)[i];
+for (int i=0;i<960;++i) (arena+71072)[i]=(arena+69152)[i]+(arena+70112)[i];
 /* 302: Reshape /model/df_out_transform/Reshape */
+return 0;
+}
+static inline __attribute__((always_inline)) int section_mask(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 303: Unsqueeze /model/mask/Unsqueeze */
 /* 304: Transpose /model/mask/spec_buffer/Transpose */
-for (int t3=0;t3<481;++t3) memcpy((m->arena+69152)+(t3*2),(m->arena+0)+(t3*2),2*sizeof(float));
+for (int t3=0;t3<481;++t3) memcpy((arena+69152)+(t3*2),(arena+0)+(t3*2),2*sizeof(float));
 /* 305: Slice /model/mask/spec_buffer/Slice */
 /* 306: Reshape /model/mask/spec_buffer/Reshape */
 /* 307: Slice /model/mask/spec_buffer/Slice_1 */
 /* 308: Concat /model/mask/spec_buffer/Concat */
 memmove(state_out+45860,(state_in+45860)+962,1924*sizeof(float));
-memcpy(state_out+47784,(m->arena+69152),962*sizeof(float));
+memcpy(state_out+47784,(arena+69152),962*sizeof(float));
 /* 309: Slice /model/mask/spec_buffer/Slice_2 */
 /* 310: Transpose /model/mask/spec_buffer/Transpose_1 */
-for (int t3=0;t3<481;++t3) memcpy((m->arena+0)+(t3*2),((state_out+45860)+0)+(t3*2),2*sizeof(float));
+for (int t3=0;t3<481;++t3) memcpy((arena+0)+(t3*2),((state_out+45860)+0)+(t3*2),2*sizeof(float));
 /* 311: Reshape /model/mask/spec_buffer/Reshape_1 */
 /* 312: Mul /model/mask/Mul */
-for (int i=0;i<962;++i) (m->arena+69152)[i]=(m->arena+0)[i]*(m->arena+18656)[((i/2)%481)*1];
+for (int i=0;i<962;++i) (arena+69152)[i]=(arena+0)[i]*(arena+18656)[((i/2)%481)*1];
+return 0;
+}
+static inline __attribute__((always_inline)) int section_finish(DPDF_SECTION_ARGS) {
+DPDF_SECTION_UNUSED;
 /* 313: Transpose /model/df_op/coefs_buffer/Transpose */
-for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((m->arena+0)+(t2*192+t3*2),(m->arena+71072)+(t2*2+t3*10),2*sizeof(float));
+for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((arena+0)+(t2*192+t3*2),(arena+71072)+(t2*2+t3*10),2*sizeof(float));
 /* 314: Slice /model/df_op/coefs_buffer/Slice */
 /* 315: Reshape /model/df_op/coefs_buffer/Reshape */
 /* 316: Slice /model/df_op/coefs_buffer/Slice_1 */
 /* 317: Concat /model/df_op/coefs_buffer/Concat */
 memmove(state_out+48746,(state_in+48746)+960,1920*sizeof(float));
-memcpy(state_out+50666,(m->arena+0),960*sizeof(float));
+memcpy(state_out+50666,(arena+0),960*sizeof(float));
 /* 318: Slice /model/df_op/coefs_buffer/Slice_2 */
 /* 319: Reshape /model/df_op/coefs_buffer/Reshape_1 */
 /* 320: Transpose /model/df_op/Transpose */
-for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((m->arena+0)+(t2*192+t3*2),((state_out+48746)+0)+(t2*192+t3*2),2*sizeof(float));
+for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((arena+0)+(t2*192+t3*2),((state_out+48746)+0)+(t2*192+t3*2),2*sizeof(float));
 /* 321: Transpose /model/df_op/spec_buffer/Transpose */
-for (int t3=0;t3<481;++t3) memcpy((m->arena+17952)+(t3*2),(m->arena+69152)+(t3*2),2*sizeof(float));
+for (int t3=0;t3<481;++t3) memcpy((arena+17952)+(t3*2),(arena+69152)+(t3*2),2*sizeof(float));
 /* 322: Slice /model/df_op/spec_buffer/Slice */
 /* 323: Reshape /model/df_op/spec_buffer/Reshape */
 /* 324: Slice /model/df_op/spec_buffer/Slice_1 */
 /* 325: Concat /model/df_op/spec_buffer/Concat */
 memmove(state_out+51626,(state_in+51626)+962,3848*sizeof(float));
-memcpy(state_out+55474,(m->arena+17952),962*sizeof(float));
+memcpy(state_out+55474,(arena+17952),962*sizeof(float));
 /* 326: Slice /model/df_op/spec_buffer/Slice_2 */
 /* 327: Transpose /model/df_op/spec_buffer/Transpose_1 */
-for (int t2=0;t2<5;++t2) for (int t3=0;t3<481;++t3) memcpy((m->arena+22816)+(t2*962+t3*2),((state_out+51626)+0)+(t2*962+t3*2),2*sizeof(float));
+for (int t2=0;t2<5;++t2) for (int t3=0;t3<481;++t3) memcpy((arena+22816)+(t2*962+t3*2),((state_out+51626)+0)+(t2*962+t3*2),2*sizeof(float));
 /* 328: Reshape /model/df_op/spec_buffer/Reshape_1 */
 /* 329: Slice /model/df_op/Slice */
-for (int i=0;i<960;++i) (m->arena+17952)[i]=(m->arena+22816)[(0+0*1)*4810+(0+0*1)*4810+(0+((i/192)%5)*1)*962+(0+((i/2)%96)*1)*2+(0+((i/1)%2)*1)*1];
+for (int i=0;i<960;++i) (arena+17952)[i]=(arena+22816)[(0+0*1)*4810+(0+0*1)*4810+(0+((i/192)%5)*1)*962+(0+((i/2)%96)*1)*2+(0+((i/1)%2)*1)*1];
 /* 330: Gather /model/df_op/Gather */
-for (int b=0;b<480;++b) memcpy((m->arena+18912)+b*1,(m->arena+17952)+(b*2+0)*1,1*sizeof(float));
+for (int b=0;b<480;++b) memcpy((arena+18912)+b*1,(arena+17952)+(b*2+0)*1,1*sizeof(float));
 /* 331: Gather /model/df_op/Gather_1 */
-for (int b=0;b<480;++b) memcpy((m->arena+2144)+b*1,(m->arena+0)+(b*2+0)*1,1*sizeof(float));
+for (int b=0;b<480;++b) memcpy((arena+2144)+b*1,(arena+0)+(b*2+0)*1,1*sizeof(float));
 /* 332: Mul /model/df_op/Mul */
-for (int i=0;i<480;++i) (m->arena+74928)[i]=(m->arena+18912)[i]*(m->arena+2144)[i];
+for (int i=0;i<480;++i) (arena+74928)[i]=(arena+18912)[i]*(arena+2144)[i];
 /* 333: ReduceSum /model/df_op/ReduceSum */
-for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(m->arena+74928)[(b*5+k)*96+j]; (m->arena+1232)[b*96+j]=sum; }
+for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(arena+74928)[(b*5+k)*96+j]; (arena+1232)[b*96+j]=sum; }
 /* 334: Gather /model/df_op/Gather_2 */
-for (int b=0;b<480;++b) memcpy((m->arena+74928)+b*1,(m->arena+17952)+(b*2+1)*1,1*sizeof(float));
+for (int b=0;b<480;++b) memcpy((arena+74928)+b*1,(arena+17952)+(b*2+1)*1,1*sizeof(float));
 /* 335: Gather /model/df_op/Gather_3 */
-for (int b=0;b<480;++b) memcpy((m->arena+17952)+b*1,(m->arena+0)+(b*2+1)*1,1*sizeof(float));
+for (int b=0;b<480;++b) memcpy((arena+17952)+b*1,(arena+0)+(b*2+1)*1,1*sizeof(float));
 /* 336: Mul /model/df_op/Mul_1 */
-for (int i=0;i<480;++i) (m->arena+18432)[i]=(m->arena+74928)[i]*(m->arena+17952)[i];
+for (int i=0;i<480;++i) (arena+18432)[i]=(arena+74928)[i]*(arena+17952)[i];
 /* 337: ReduceSum /model/df_op/ReduceSum_1 */
-for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(m->arena+18432)[(b*5+k)*96+j]; (m->arena+1328)[b*96+j]=sum; }
+for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(arena+18432)[(b*5+k)*96+j]; (arena+1328)[b*96+j]=sum; }
 /* 338: Sub /model/df_op/Sub */
-for (int i=0;i<96;++i) (m->arena+2624)[i]=(m->arena+1232)[i]-(m->arena+1328)[i];
+for (int i=0;i<96;++i) (arena+2624)[i]=(arena+1232)[i]-(arena+1328)[i];
 /* 339: Mul /model/df_op/Mul_2 */
-for (int i=0;i<480;++i) (m->arena+18432)[i]=(m->arena+18912)[i]*(m->arena+17952)[i];
+for (int i=0;i<480;++i) (arena+18432)[i]=(arena+18912)[i]*(arena+17952)[i];
 /* 340: ReduceSum /model/df_op/ReduceSum_2 */
-for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(m->arena+18432)[(b*5+k)*96+j]; (m->arena+2720)[b*96+j]=sum; }
+for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(arena+18432)[(b*5+k)*96+j]; (arena+2720)[b*96+j]=sum; }
 /* 341: Mul /model/df_op/Mul_3 */
-for (int i=0;i<480;++i) (m->arena+0)[i]=(m->arena+74928)[i]*(m->arena+2144)[i];
+for (int i=0;i<480;++i) (arena+0)[i]=(arena+74928)[i]*(arena+2144)[i];
 /* 342: ReduceSum /model/df_op/ReduceSum_3 */
-for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(m->arena+0)[(b*5+k)*96+j]; (m->arena+2816)[b*96+j]=sum; }
+for (int b=0;b<1;++b) for (int j=0;j<96;++j) { float sum=0; for (int k=0;k<5;++k) sum+=(arena+0)[(b*5+k)*96+j]; (arena+2816)[b*96+j]=sum; }
 /* 343: Add /model/df_op/Add */
-for (int i=0;i<96;++i) (m->arena+1232)[i]=(m->arena+2720)[i]+(m->arena+2816)[i];
+for (int i=0;i<96;++i) (arena+1232)[i]=(arena+2720)[i]+(arena+2816)[i];
 /* 344: Unsqueeze /model/df_op/Unsqueeze */
 /* 345: Unsqueeze /model/df_op/Unsqueeze_1 */
 /* 346: Concat /model/df_op/Concat */
-for (int b=0;b<96;++b) memcpy((m->arena+2720)+b*2+0,(m->arena+2624)+b*1,1*sizeof(float));
-for (int b=0;b<96;++b) memcpy((m->arena+2720)+b*2+1,(m->arena+1232)+b*1,1*sizeof(float));
+for (int b=0;b<96;++b) memcpy((arena+2720)+b*2+0,(arena+2624)+b*1,1*sizeof(float));
+for (int b=0;b<96;++b) memcpy((arena+2720)+b*2+1,(arena+1232)+b*1,1*sizeof(float));
 /* 347: Unsqueeze /model/df_op/Unsqueeze_2 */
 /* 348: Slice  */
 /* 349: Concat /model/df_op/Concat_1 */
-for (int b=0;b<1;++b) memcpy((m->arena+0)+b*962+0,(m->arena+2720)+b*192,192*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+0)+b*962+192,((m->arena+22816)+2116)+b*770,770*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+0)+b*962+0,(arena+2720)+b*192,192*sizeof(float));
+for (int b=0;b<1;++b) memcpy((arena+0)+b*962+192,((arena+22816)+2116)+b*770,770*sizeof(float));
 /* 350: Squeeze /model/Squeeze */
 /* 352: Mul /Mul_1 */
 /*  same FP32 product, direct external spectrum handoff. */
-for (int i=0;i<962;++i) spec_out[i]=(m->arena+0)[i]*(m->weights+8)[0];
+for (int i=0;i<962;++i) spec_out[i]=(arena+0)[i]*(m->weights+8)[0];
 /* 351: Concat /model/Concat */
 /*  state read until here; other state was written after its last read. */
-memcpy(state_out+0,(m->arena+2944),481*sizeof(float));
-memcpy(state_out+481,(m->arena+1472),96*sizeof(float));
-memcpy(state_out+13860,(m->arena+976),256*sizeof(float));
-memcpy(state_out+14116,(m->arena+38176),256*sizeof(float));
-memcpy(state_out+14372,(m->arena+20000),256*sizeof(float));
-memcpy(state_out+14628,(m->arena+17696),256*sizeof(float));
-memcpy(state_out+14884,(m->arena+19408),256*sizeof(float));
-
+memcpy(state_out+0,(arena+2944),481*sizeof(float));
+memcpy(state_out+481,(arena+1472),96*sizeof(float));
+memcpy(state_out+13860,(arena+976),256*sizeof(float));
+memcpy(state_out+14116,(arena+38176),256*sizeof(float));
+memcpy(state_out+14372,(arena+20000),256*sizeof(float));
+memcpy(state_out+14628,(arena+17696),256*sizeof(float));
+memcpy(state_out+14884,(arena+19408),256*sizeof(float));
 return 0;
+}
+void dpdf_model_pause(dpdf_model *m,int hops) { if (m->worker) dpdf_worker_pause(m->worker,hops); }
+void dpdf_model_scramble(dpdf_model *m,uint32_t seed) {
+    float *arenas[2]={m->arena,m->lane_arena};
+    for (int k=0;k<2;++k) if (arenas[k]) for (size_t i=0;i<dpdf_model_arena_bytes()/sizeof(float);++i) {
+        seed=seed*1664525u+1013904223u;
+        uint32_t bits=0x7fc00000u|(seed>>10); memcpy(arenas[k]+i,&bits,sizeof(bits));
+    }
+}
+/* Two-lane schedule. The DF encoder and decoder sections run on a private
+ * arena, concurrently with the ERB sections on the main arena; their state
+ * regions are disjoint. Only these spans cross between the arenas: section
+ * outputs the other lane reads, as last written in graph order. Each lane
+ * runs the same sections as the sequential order, so results are identical
+ * whichever thread runs the DF lane. */
+typedef struct { int offset,count; } dpdf_span;
+static const dpdf_span lane_in_encoder[]={{0,3425}};
+static const dpdf_span lane_out_encoder[]={{2144,576}};
+static const dpdf_span lane_in_decoder[]={{0,2656}};
+static const dpdf_span lane_out_decoder[]={{17696,736},{19152,768},{70114,2878}};
+#define DPDF_SPANS(s) s,(int)(sizeof(s)/sizeof(s[0]))
+static void copy_spans(float *dst,const float *src,const dpdf_span *s,int n) {
+    for (int i=0;i<n;++i) memcpy(dst+s[i].offset,src+s[i].offset,(size_t)s[i].count*sizeof(float));
+}
+typedef struct { dpdf_model *m; const float *spec,*state_in; float *spec_out,*state_out; } dpdf_lane;
+static int df_encoder(void *p) {
+    dpdf_lane *l=p;
+    return section_df_enc(l->m,l->m->lane_arena,l->spec,l->state_in,l->spec_out,l->state_out) ||
+           section_df_emb(l->m,l->m->lane_arena,l->spec,l->state_in,l->spec_out,l->state_out);
+}
+static int df_decoder(void *p) {
+    dpdf_lane *l=p;
+    return section_df_dec(l->m,l->m->lane_arena,l->spec,l->state_in,l->spec_out,l->state_out);
+}
+static int erb_encoder(void *p) {
+    dpdf_lane *l=p;
+    return section_erb_enc(l->m,l->m->arena,l->spec,l->state_in,l->spec_out,l->state_out) ||
+           section_erb_emb(l->m,l->m->arena,l->spec,l->state_in,l->spec_out,l->state_out);
+}
+static int erb_decoder(void *p) {
+    dpdf_lane *l=p;
+    return section_erb_dec(l->m,l->m->arena,l->spec,l->state_in,l->spec_out,l->state_out) ||
+           section_mask(l->m,l->m->arena,l->spec,l->state_in,l->spec_out,l->state_out);
+}
+/* The helper takes the shorter lane of each region, so the longer one, on
+ * the already running caller, absorbs the helper's wake-up. After the
+ * hop's last task the helper need not keep spinning. Without a worker the
+ * caller runs both. */
+static int run_lanes(dpdf_worker *w,dpdf_task helper,dpdf_task own,dpdf_lane *l,int last) {
+    if (w) dpdf_worker_post(w,helper,l);
+    if (w && last) dpdf_worker_end(w);
+    int failed=own(l);
+    failed|=w ? dpdf_worker_join(w) : helper(l);
+    return failed;
+}
+static int process_lanes(dpdf_model *m,const float *spec,const float *state_in,float *spec_out,float *state_out) {
+    float *a=m->arena,*b=m->lane_arena;
+    dpdf_lane lane={m,spec,state_in,spec_out,state_out};
+    int failed=section_prep(m,a,spec,state_in,spec_out,state_out);
+    if (!failed) {
+        copy_spans(b,a,DPDF_SPANS(lane_in_encoder));
+        failed=run_lanes(m->worker,df_encoder,erb_encoder,&lane,0);
+    }
+    if (!failed) {
+        copy_spans(a,b,DPDF_SPANS(lane_out_encoder));
+        failed=section_combine(m,a,spec,state_in,spec_out,state_out);
+    }
+    if (!failed) {
+        copy_spans(b,a,DPDF_SPANS(lane_in_decoder));
+        failed=run_lanes(m->worker,df_decoder,erb_decoder,&lane,1);
+    }
+    if (!failed) {
+        copy_spans(a,b,DPDF_SPANS(lane_out_decoder));
+        failed=section_finish(m,a,spec,state_in,spec_out,state_out);
+    }
+    if (m->worker) dpdf_worker_end(m->worker);
+    return failed ? -1 : 0;
+}
+int dpdf_model_process(dpdf_model *m,const float *spec,const float *state_in,float *spec_out,float *state_out) {
+    if (!m || !spec || !state_in || !spec_out || !state_out) return -1;
+    /* A backing-off worker runs the hop sequentially; each hop depends only
+     * on its inputs, so the paths can alternate freely. */
+    if (m->lane_arena && (!m->worker || dpdf_worker_begin(m->worker)))
+        return process_lanes(m,spec,state_in,spec_out,state_out);
+    if (section_prep(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_erb_enc(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_df_enc(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_df_emb(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_erb_emb(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_combine(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_erb_dec(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_df_dec(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_mask(m,m->arena,spec,state_in,spec_out,state_out) ||
+        section_finish(m,m->arena,spec,state_in,spec_out,state_out)) return -1;
+    return 0;
 }

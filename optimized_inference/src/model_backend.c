@@ -3,8 +3,10 @@
 #ifndef DPDF_MODEL_SIZE
 #error DPDF_MODEL_SIZE must identify the compiled graph.
 #endif
-static void *create(const float *weights, size_t count) {
-    return dpdf_model_create(weights, count);
+static void *create(const float *weights, size_t count, uint32_t flags) {
+    if (flags & ~(uint32_t)DPDFNET_CREATE_WORKER_THREAD) return NULL;
+    return dpdf_model_create(weights, count,
+        (flags & DPDFNET_CREATE_WORKER_THREAD) ? DPDF_MODEL_LANES | DPDF_MODEL_WORKER : 0);
 }
 static int process(void *m, const float *x, const float *s, float *y, float *t) {
     return dpdf_model_process(m, x, s, y, t);
