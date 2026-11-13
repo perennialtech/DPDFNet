@@ -10,25 +10,40 @@
     _mm256_maddubs_epi16(a,w),_mm256_set1_epi16(1)))
 #endif
 
-static void quantize(const float *x,int8_t *out,int k,float *scale,int *zp) {
+/* Row range. The scalar reference starts at zero and ignores unordered
+ * comparisons; a zero second operand preserves that behavior, so neither
+ * bound is NaN. */
+static inline __attribute__((always_inline)) void quantize_range(
+        const float *x,int k,float *low,float *high) {
     __m256 lo=_mm256_setzero_ps(),hi=lo;
     for (int j=0;j<k;j+=8) { __m256 v=_mm256_loadu_ps(x+j); lo=_mm256_min_ps(lo,v); hi=_mm256_max_ps(hi,v); }
-    /* Reduce in registers. The scalar reference starts at zero and ignores
-     * unordered comparisons; a zero second operand preserves that behavior. */
     lo=_mm256_min_ps(lo,_mm256_setzero_ps());
     hi=_mm256_max_ps(hi,_mm256_setzero_ps());
     __m128 low4=_mm_min_ps(_mm256_castps256_ps128(lo),_mm256_extractf128_ps(lo,1));
     __m128 high4=_mm_max_ps(_mm256_castps256_ps128(hi),_mm256_extractf128_ps(hi,1));
     low4=_mm_min_ps(low4,_mm_movehl_ps(low4,low4));
     high4=_mm_max_ps(high4,_mm_movehl_ps(high4,high4));
-    float low=_mm_cvtss_f32(_mm_min_ss(low4,_mm_shuffle_ps(low4,low4,0x55)));
-    float high=_mm_cvtss_f32(_mm_max_ss(high4,_mm_shuffle_ps(high4,high4,0x55)));
-    if (low==high) { memset(out,0,k); *scale=1; *zp=0; return; }
+    *low=_mm_cvtss_f32(_mm_min_ss(low4,_mm_shuffle_ps(low4,low4,0x55)));
+    *high=_mm_cvtss_f32(_mm_max_ss(high4,_mm_shuffle_ps(high4,high4,0x55)));
+}
+
+/* Row parameters: 0 for a constant row, whose activations are all zero. */
+static inline __attribute__((always_inline)) int quantize_params(
+        const float *x,int k,float *scale,int *zp,float *inverse) {
+    float low,high;
+    quantize_range(x,k,&low,&high);
+    if (low==high) { *scale=1; *zp=0; return 0; }
     *scale=(high-low)/254.0f;
     *zp=(int)nearbyintf(-low / *scale);
     if (*zp<0) *zp=0;
     if (*zp>254) *zp=254;
-    __m256 inv=_mm256_set1_ps(1.0f / *scale),z=_mm256_set1_ps((float)*zp);
+    *inverse=1.0f / *scale;
+    return 1;
+}
+
+static inline __attribute__((always_inline)) void quantize_apply(
+        const float *x,int8_t *out,int k,float inverse,int zp) {
+    __m256 inv=_mm256_set1_ps(inverse),z=_mm256_set1_ps((float)zp);
     int j=0;
     for (;j+31<k;j+=32) {
         __m256i q[4];
@@ -53,49 +68,56 @@ static void quantize(const float *x,int8_t *out,int k,float *scale,int *zp) {
     }
 }
 
+static void quantize(const float *x,int8_t *out,int k,float *scale,int *zp) {
+    float inverse;
+    if (quantize_params(x,k,scale,zp,&inverse)) quantize_apply(x,out,k,inverse,*zp);
+    else memset(out,0,k);
+}
+
 static inline __attribute__((always_inline,unused)) void quantize64(
         const float *x,int8_t *out,float *scale,int *zp) {
-    const int k=64;
-    __m256 lo=_mm256_setzero_ps(),hi=lo;
-    for (int j=0;j<k;j+=8) { __m256 v=_mm256_loadu_ps(x+j); lo=_mm256_min_ps(lo,v); hi=_mm256_max_ps(hi,v); }
-    /* Reduce in registers. The scalar reference starts at zero and ignores
-     * unordered comparisons; a zero second operand preserves that behavior. */
-    lo=_mm256_min_ps(lo,_mm256_setzero_ps());
-    hi=_mm256_max_ps(hi,_mm256_setzero_ps());
-    __m128 low4=_mm_min_ps(_mm256_castps256_ps128(lo),_mm256_extractf128_ps(lo,1));
-    __m128 high4=_mm_max_ps(_mm256_castps256_ps128(hi),_mm256_extractf128_ps(hi,1));
-    low4=_mm_min_ps(low4,_mm_movehl_ps(low4,low4));
-    high4=_mm_max_ps(high4,_mm_movehl_ps(high4,high4));
-    float low=_mm_cvtss_f32(_mm_min_ss(low4,_mm_shuffle_ps(low4,low4,0x55)));
-    float high=_mm_cvtss_f32(_mm_max_ss(high4,_mm_shuffle_ps(high4,high4,0x55)));
-    if (low==high) { memset(out,0,k); *scale=1; *zp=0; return; }
-    *scale=(high-low)/254.0f;
-    *zp=(int)nearbyintf(-low / *scale);
-    if (*zp<0) *zp=0;
-    if (*zp>254) *zp=254;
-    __m256 inv=_mm256_set1_ps(1.0f / *scale),z=_mm256_set1_ps((float)*zp);
-    int j=0;
-    for (;j+31<k;j+=32) {
-        __m256i q[4];
-        for (int t=0;t<4;++t) {
-            __m256 v=_mm256_add_ps(_mm256_mul_ps(_mm256_loadu_ps(x+j+t*8),inv),z);
-            q[t]=_mm256_cvtps_epi32(v);
-        }
-        __m256i p=_mm256_packus_epi16(_mm256_packs_epi32(q[0],q[1]),_mm256_packs_epi32(q[2],q[3]));
-        /* The two packs saturate to [0,255]; one byte min gives [0,254]. */
-        p=_mm256_min_epu8(p,_mm256_set1_epi8((char)254));
-        /* AVX2 packs within 128-bit lanes: reorder four-byte groups. */
-        p=_mm256_permutevar8x32_epi32(p,_mm256_setr_epi32(0,4,1,5,2,6,3,7));
-        _mm256_storeu_si256((__m256i *)(out+j),p);
+    float inverse;
+    if (quantize_params(x,64,scale,zp,&inverse)) quantize_apply(x,out,64,inverse,*zp);
+    else memset(out,0,64);
+}
+
+/* Batches find every row's range first, then derive parameters for eight
+ * rows per vector with the same IEEE operations as quantize_params. The
+ * serial range/division chain otherwise stalls conversions behind it.
+ * Constant rows divide a placeholder (0,1) range, raising no new exceptions,
+ * and keep scale 1, zero point 0 and zero activations. */
+static inline __attribute__((always_inline)) void quantize_rows_k(
+        const float *x,int8_t *out,int k,int m,float *scales,int *zp) {
+    float low[48],high[48],inverse[48]; int live[48];
+    for (int r=0;r<m;++r) quantize_range(x+r*k,k,low+r,high+r);
+    for (int r=m;r<(m+7)/8*8;++r) { low[r]=0; high[r]=1; }
+    const __m256 zero=_mm256_setzero_ps(),one=_mm256_set1_ps(1.0f);
+    for (int r=0;r<m;r+=8) {
+        __m256 lo=_mm256_loadu_ps(low+r),hi=_mm256_loadu_ps(high+r);
+        __m256 constant=_mm256_cmp_ps(lo,hi,_CMP_EQ_OQ);
+        lo=_mm256_blendv_ps(lo,zero,constant); hi=_mm256_blendv_ps(hi,one,constant);
+        __m256 scale=_mm256_div_ps(_mm256_sub_ps(hi,lo),_mm256_set1_ps(254.0f));
+        __m256 point=_mm256_round_ps(_mm256_div_ps(_mm256_xor_ps(lo,_mm256_set1_ps(-0.0f)),scale),
+                                     _MM_FROUND_CUR_DIRECTION|_MM_FROUND_NO_EXC);
+        __m256i z=_mm256_cvttps_epi32(point);
+        z=_mm256_min_epi32(_mm256_max_epi32(z,_mm256_setzero_si256()),_mm256_set1_epi32(254));
+        __m256 inv=_mm256_div_ps(one,scale);
+        __m256i keep=_mm256_castps_si256(constant);
+        float s8[8],i8[8]; int z8[8],l8[8];
+        _mm256_storeu_ps(s8,_mm256_blendv_ps(scale,one,constant));
+        _mm256_storeu_si256((__m256i *)z8,_mm256_andnot_si256(keep,z));
+        _mm256_storeu_ps(i8,inv);
+        _mm256_storeu_si256((__m256i *)l8,_mm256_andnot_si256(keep,_mm256_set1_epi32(1)));
+        for (int t=0;t<8 && r+t<m;++t) { scales[r+t]=s8[t]; zp[r+t]=z8[t]; inverse[r+t]=i8[t]; live[r+t]=l8[t]; }
     }
-    for (;j<k;j+=8) {
-        __m256 v=_mm256_add_ps(_mm256_mul_ps(_mm256_loadu_ps(x+j),inv),z);
-        __m256i q=_mm256_cvtps_epi32(v);
-        __m128i p=_mm_packs_epi32(_mm256_castsi256_si128(q),_mm256_extracti128_si256(q,1));
-        p=_mm_packus_epi16(p,p);
-        p=_mm_min_epu8(p,_mm_set1_epi8((char)254));
-        _mm_storel_epi64((__m128i *)(out+j),p);
+    for (int r=0;r<m;++r) {
+        if (live[r]) quantize_apply(x+r*k,out+r*k,k,inverse[r],zp[r]);
+        else memset(out+r*k,0,k);
     }
+}
+static void quantize_rows(const float *x,int8_t *out,int k,int m,float *scales,int *zp) {
+    if (k==64) quantize_rows_k(x,out,64,m,scales,zp);
+    else quantize_rows_k(x,out,k,m,scales,zp);
 }
 
 #ifndef DPDF_DISABLE_QAFFINE_ROW
@@ -267,15 +289,7 @@ static inline __attribute__((always_inline)) void qpair_fused4(
 static void qaffine_batch_tiled(const dpdf_qmatrix *q,const float *x,const float *bias,float *y,int m) {
     int8_t activation[48*512]; float scales[48]; int zp[48];
     const int k=q->k,n=q->n;
-#if DPDF_MODEL_SIZE == 2
-    if (k==64) {
-        for (int r=0;r<m;++r) quantize64(x+r*64,activation+r*64,scales+r,zp+r);
-    } else {
-        for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
-    }
-#else
-    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
-#endif
+    quantize_rows(x,activation,k,m,scales,zp);
 #if defined(DPDF_QPAIR_FUSED64) && (DPDF_MODEL_SIZE == 2 || defined(DPDF_INT8_VNNI))
     if (k==64) {
         for (int r=0;r<m;r+=4) for (int c=0;c<n;c+=16)
@@ -302,15 +316,7 @@ static void qaffine_batch(const dpdf_qmatrix *q,const float *x,const float *bias
     /* Callers split larger batches into at most 48 rows. */
     int8_t activation[48*512]; float scales[48]; int zp[48];
     const int k=q->k,n=q->n;
-#if DPDF_MODEL_SIZE == 2
-    if (k==64) {
-        for (int r=0;r<m;++r) quantize64(x+r*64,activation+r*64,scales+r,zp+r);
-    } else {
-        for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
-    }
-#else
-    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
-#endif
+    quantize_rows(x,activation,k,m,scales,zp);
     int r=0;
     for (;r+3<m;r+=4) for (int c=0;c<n;c+=8) {
         __m256i s0=_mm256_setzero_si256(),s1=s0,s2=s0,s3=s0;
@@ -410,15 +416,7 @@ void DPDF_QPAIR_IMPL(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,const float *
     }
     int8_t activation[48*512]; float scales[48]; int zp[48];
     const int k=q0->k,n=q0->n;
-#if DPDF_MODEL_SIZE == 2
-    if (k==64) {
-        for (int r=0;r<m;++r) quantize64(x+r*64,activation+r*64,scales+r,zp+r);
-    } else {
-        for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
-    }
-#else
-    for (int r=0;r<m;++r) quantize(x+r*k,activation+r*k,k,scales+r,zp+r);
-#endif
+    quantize_rows(x,activation,k,m,scales,zp);
 #if defined(DPDF_QPAIR_FUSED64) && (DPDF_MODEL_SIZE == 2 || defined(DPDF_INT8_VNNI))
     if (k==64) {
         for (int r=0;r<m;r+=4) for (int c=0;c<n;c+=8)
