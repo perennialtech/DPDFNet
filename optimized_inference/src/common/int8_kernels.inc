@@ -523,13 +523,19 @@ static inline __attribute__((always_inline)) void interleave32(const __m256i *v,
  * cannot change the result: the final comparison with +0 settles signed
  * zeros, as in quantize_range. A NaN group repeats that exact row order. */
 static inline __attribute__((always_inline)) void cm_range(const float *x,int width,__m256 *lo_out,__m256 *hi_out) {
-    __m256 lo=_mm256_setzero_ps(),hi=lo,nan=lo;
-    for (int k=0;k<64;k+=2) {
-        __m256 a=_mm256_loadu_ps(x+k*width),b=_mm256_loadu_ps(x+(k+1)*width);
-        lo=_mm256_min_ps(_mm256_min_ps(lo,a),b); hi=_mm256_max_ps(_mm256_max_ps(hi,a),b);
-        nan=_mm256_or_ps(nan,_mm256_cmp_ps(a,b,_CMP_UNORD_Q));
+    /* Four independent chains: one serial 64-deep min/max chain is
+     * latency-bound. */
+    __m256 lo[4],hi[4],nan[2];
+    for (int i=0;i<4;++i) lo[i]=hi[i]=_mm256_setzero_ps();
+    nan[0]=nan[1]=_mm256_setzero_ps();
+    for (int k=0;k<64;k+=8) for (int i=0;i<4;++i) {
+        __m256 a=_mm256_loadu_ps(x+(k+2*i)*width),b=_mm256_loadu_ps(x+(k+2*i+1)*width);
+        lo[i]=_mm256_min_ps(_mm256_min_ps(lo[i],a),b); hi[i]=_mm256_max_ps(_mm256_max_ps(hi[i],a),b);
+        nan[i&1]=_mm256_or_ps(nan[i&1],_mm256_cmp_ps(a,b,_CMP_UNORD_Q));
     }
-    if (__builtin_expect(_mm256_movemask_ps(nan),0)) {
+    __m256 low=_mm256_min_ps(_mm256_min_ps(lo[0],lo[1]),_mm256_min_ps(lo[2],lo[3]));
+    __m256 high=_mm256_max_ps(_mm256_max_ps(hi[0],hi[1]),_mm256_max_ps(hi[2],hi[3]));
+    if (__builtin_expect(_mm256_movemask_ps(_mm256_or_ps(nan[0],nan[1])),0)) {
         float low[8],high[8],column[64];
         for (int i=0;i<8;++i) {
             for (int k=0;k<64;++k) column[k]=x[k*width+i];
@@ -538,17 +544,18 @@ static inline __attribute__((always_inline)) void cm_range(const float *x,int wi
         *lo_out=_mm256_loadu_ps(low); *hi_out=_mm256_loadu_ps(high);
         return;
     }
-    *lo_out=_mm256_min_ps(lo,_mm256_setzero_ps());
-    *hi_out=_mm256_max_ps(hi,_mm256_setzero_ps());
+    *lo_out=_mm256_min_ps(low,_mm256_setzero_ps());
+    *hi_out=_mm256_max_ps(high,_mm256_setzero_ps());
 }
 
 /* Four channels of eight positions -> [position][4 channels] bytes. */
 static inline __attribute__((always_inline)) __m256i cm_bytes(const float *x,int width,
-        __m256 live,__m256 inv,__m256 z) {
+        __m256 live,__m256 inv,__m256 z,const int masked) {
     __m256i q[4];
     for (int c=0;c<4;++c) {
         /* Constant positions convert +0 with zero parameters: no new exceptions. */
-        __m256 v=_mm256_and_ps(_mm256_loadu_ps(x+c*width),live);
+        __m256 v=_mm256_loadu_ps(x+c*width);
+        if (masked) v=_mm256_and_ps(v,live);
         q[c]=_mm256_cvtps_epi32(_mm256_add_ps(_mm256_mul_ps(v,inv),z));
     }
     __m256i p=_mm256_packus_epi16(_mm256_packs_epi32(q[0],q[1]),_mm256_packs_epi32(q[2],q[3]));
@@ -698,7 +705,7 @@ static inline __attribute__((always_inline)) void cm_dot1(const uint8_t *act,int
 }
 
 static inline __attribute__((always_inline)) void cm_block(const dpdf_qmatrix *q,
-        const uint8_t *act,const float *scales,const int32_t *negzp,int positions,int vector,
+        const uint8_t *act,const float *scales,const int32_t *zps,int positions,int vector,
         int n0,const float *bias,float *y,int relu,const int vectors) {
     __m256i sum[4][DPDF_CM_VECTORS];
     const int8_t *w=q->packed+(n0/8)*64*8+(n0%8)*4;
@@ -706,12 +713,14 @@ static inline __attribute__((always_inline)) void cm_block(const dpdf_qmatrix *q
     else cm_dot(act+vector*32,positions*4,w,sum);
     for (int i=0;i<4;++i) {
         const int n=n0+i;
-        const __m256i weight_sum=_mm256_set1_epi32(q->sum[n]);
+        /* |sum|<=64*63 and zp<=254: one 16-bit multiply gives the exact
+         * correction zp*-sum, as in the row kernels. */
+        const __m256i weight_sum=_mm256_set1_epi32((int32_t)((uint32_t)-q->sum[n]&0xffffu));
         const __m256 weight_scale=_mm256_set1_ps(q->scale[n]),b=_mm256_set1_ps(bias[n]);
         for (int j=0;j<vectors;++j) {
             const int p=(vector+j)*8;
             __m256i corrected=_mm256_add_epi32(sum[i][j],
-                _mm256_mullo_epi32(weight_sum,_mm256_loadu_si256((const __m256i *)(negzp+p))));
+                _mm256_madd_epi16(_mm256_load_si256((const __m256i *)(zps+p)),weight_sum));
             __m256 scale=_mm256_mul_ps(_mm256_loadu_ps(scales+p),weight_scale);
             __m256 result=_mm256_fmadd_ps(_mm256_cvtepi32_ps(corrected),scale,b);
             if (relu) result=_mm256_max_ps(result,_mm256_setzero_ps());
@@ -725,10 +734,10 @@ void DPDF_QCM_IMPL(const dpdf_qmatrix *q,const float *const *pieces,int count,in
     const int positions=count*width;
     _Alignas(32) uint8_t act[16*DPDF_CM_MAX*4];
     _Alignas(32) float scales[DPDF_CM_MAX];
-    _Alignas(32) int32_t negzp[DPDF_CM_MAX];
+    _Alignas(32) int32_t zps[DPDF_CM_MAX];
     for (int t=0;t<width;t+=8) {
         __m256 inv[3],z[3],live[3];
-        __m256i scale_bits[3],negative_zp[3];
+        __m256i scale_bits[3],points[3];
         for (int j=0;j<count;++j) {
             __m256 lo,hi,scale,constant; __m256i zp;
             cm_range(pieces[j]+t,width,&lo,&hi);
@@ -737,16 +746,19 @@ void DPDF_QCM_IMPL(const dpdf_qmatrix *q,const float *const *pieces,int count,in
             inv[j]=_mm256_and_ps(inv[j],live[j]);
             z[j]=_mm256_cvtepi32_ps(zp);
             scale_bits[j]=_mm256_castps_si256(scale);
-            negative_zp[j]=_mm256_sub_epi32(_mm256_setzero_si256(),zp);
+            points[j]=zp;
         }
         __m256i out[3];
         interleave32(scale_bits,count,out);
         for (int j=0;j<count;++j) _mm256_store_si256((__m256i *)(scales+t*count+j*8),out[j]);
-        interleave32(negative_zp,count,out);
-        for (int j=0;j<count;++j) _mm256_store_si256((__m256i *)(negzp+t*count+j*8),out[j]);
+        interleave32(points,count,out);
+        for (int j=0;j<count;++j) _mm256_store_si256((__m256i *)(zps+t*count+j*8),out[j]);
+        int masked=0;
+        for (int j=0;j<count;++j) masked|=_mm256_movemask_ps(live[j])!=0xff;
         for (int g=0;g<16;++g) {
             __m256i bytes[3];
-            for (int j=0;j<count;++j) bytes[j]=cm_bytes(pieces[j]+g*4*width+t,width,live[j],inv[j],z[j]);
+            for (int j=0;j<count;++j) bytes[j]=masked ? cm_bytes(pieces[j]+g*4*width+t,width,live[j],inv[j],z[j],1)
+                                                    : cm_bytes(pieces[j]+g*4*width+t,width,live[j],inv[j],z[j],0);
             interleave32(bytes,count,out);
             for (int j=0;j<count;++j) _mm256_store_si256((__m256i *)(act+g*positions*4+(t*count+j*8)*4),out[j]);
         }
@@ -755,8 +767,8 @@ void DPDF_QCM_IMPL(const dpdf_qmatrix *q,const float *const *pieces,int count,in
     for (int n0=0;n0<64;n0+=4) {
         int v=0;
         for (;v+DPDF_CM_VECTORS<=vectors;v+=DPDF_CM_VECTORS)
-            cm_block(q,act,scales,negzp,positions,v,n0,bias,y,relu,DPDF_CM_VECTORS);
-        for (;v<vectors;++v) cm_block(q,act,scales,negzp,positions,v,n0,bias,y,relu,1);
+            cm_block(q,act,scales,zps,positions,v,n0,bias,y,relu,DPDF_CM_VECTORS);
+        for (;v<vectors;++v) cm_block(q,act,scales,zps,positions,v,n0,bias,y,relu,1);
     }
 }
 #undef DPDF_CM_VECTORS
