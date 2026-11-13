@@ -75,9 +75,10 @@ cmake --build build-static --parallel 2
 ctest --test-dir build-static --output-on-failure
 ```
 
-Direct static consumers must link `libm`. Exported CMake targets carry that
-dependency automatically. The shared library exports only the seven public
-functions in `dpdfnet.h`; graph and kernel symbols are private.
+Direct static consumers must link `libm` and the system thread library
+(`-pthread`). Exported CMake targets carry both dependencies automatically.
+The shared library exports only the eight public functions in `dpdfnet.h`;
+graph and kernel symbols are private.
 
 ## Sanitizers and audio regression
 
@@ -90,6 +91,20 @@ Assembly is not instrumented: independent scalar oracles and read-only guard
 pages test its exact operand lengths, canaries, aliases and FP control modes.
 Sanitizer test executables use non-PIE linking to avoid ASan shadow-map startup
 collisions on high-ASLR Linux/WSL hosts.
+
+For the worker thread's handoff protocol, build with ThreadSanitizer:
+
+```sh
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDPDF_SANITIZE_THREAD=ON
+cmake --build build-tsan --parallel 2
+ctest --test-dir build-tsan --output-on-failure
+```
+
+ThreadSanitizer sees the C code, including every handoff between the threads,
+but not memory accessed inside the assembly kernels. The scrambled-arena
+contract in `full_contract` covers the data the two threads exchange. On
+kernels with high mmap randomization, ThreadSanitizer may need
+`sudo sysctl vm.mmap_rnd_bits=28` before it can start.
 
 The optional WAV example and audio verifier were validated with Python 3.11,
 NumPy 2.4.6 and SoundFile 0.13.1. Install their pinned dependencies with

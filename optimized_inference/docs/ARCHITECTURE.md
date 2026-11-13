@@ -42,6 +42,51 @@ Model-specific choices in shared C sources are selected by the private
 operation order of each graph. Do not replace explicit operations with FMA
 or change quantization rounding without new numerical and audio evidence.
 
+## Worker-thread schedule
+
+The ERB (mask) and deep-filter (DF) branches of each graph are independent
+between the shared input preparation, the point where the encoders combine,
+and the final synthesis. Each graph is split into always-inline sections that
+take the arena as an argument:
+
+```text
+prep → [erb_enc, erb_emb ‖ df_enc, df_emb] → combine → [erb_dec, mask ‖ df_dec] → finish
+```
+
+A worker context runs the DF sections on a second, private arena while the
+ERB sections use the main one. The bracketed regions run on two threads; the
+rest runs on the caller. The helper takes the shorter lane of each region
+(model 8: ERB encoder, DF decoder; model 2: DF encoder, DF decoder), so the
+caller's longer lane hides the helper's wake-up. Lanes run exactly the
+sections of the sequential order, which is why results are bit-identical.
+
+Between regions, `copy_spans` copies only the arena spans one lane reads from
+the other: the `lane_in_*` and `lane_out_*` tables beside `process_lanes`.
+Both lanes write state directly; their state regions are disjoint, so
+in-place state is safe. The single-threaded `dpdf_model_process` path still
+runs every section on one arena.
+
+`common/worker.c` is the handoff. One task is posted per region; the caller
+claims it itself if the helper has not, so the result never depends on which
+thread runs a lane. `dpdf_worker_begin` and `dpdf_worker_end` bracket each hop
+and drive the helper's spin, sleep and cadence-predicted pre-wake. The
+helper adopts the caller's MXCSR and returns its exception flags. When the
+helper keeps being preempted while holding a task, or keeps missing every
+task, `dpdf_worker_begin` returns 0 for a while and `dpdf_model_process`
+takes the sequential path. Each hop depends only on its inputs, so the two
+paths may alternate; `full_contract` interleaves them.
+
+**Maintenance.** Arena offsets are graph-specific, so any edit to a graph's
+arena layout or section boundaries requires new span tables. Derive them
+mechanically: run each section on an arena poisoned with two different
+patterns to find which offsets it writes, track the last writer of each offset
+in graph order, and copy whatever the other lane reads. Then shrink the spans
+only as far as the lane test below still passes. `full_contract` runs every
+hop of the lane schedules on arenas refilled with NaN payloads, in place and
+out of place, against the sequential path, so a missing span fails that
+test. ThreadSanitizer checks the handoff protocol but cannot see accesses made
+inside the assembly kernels; that test is what covers the data.
+
 ## Source boundaries
 
 - `runtime.c`, `backend.h`, and `model_backend.c` implement the public API and
@@ -58,6 +103,8 @@ or change quantization rounding without new numerical and audio evidence.
   pointwise convolutions and fused ReLUs. Because state is written as soon as
   its last read is done, a mid-graph `-1` (not reachable with these fixed
   shapes) would leave the state partly updated.
+- `common/worker.c` implements the optional helper thread; `private/worker.h`
+  documents its protocol.
 - `private/` holds kernel declarations and namespace mappings. These headers
   are not installed and do not define a consumer ABI.
 

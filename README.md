@@ -63,7 +63,9 @@ FP32 recurrent state. It includes both model weights, a shared C API,
 assembly kernels, examples, contract tests and build documentation.
 
 The supported target is Linux x86-64 with AVX2/FMA and GCC, including WSL2.
-Inference uses one calling thread and requires no ONNX Runtime.
+Inference uses the calling thread, optionally with one helper thread that
+cuts per-hop latency by 25–45% at identical output, and requires no ONNX
+Runtime.
 See [performance and output quality](optimized_inference/docs/PERFORMANCE.md)
 for measurements and their scope; the 50 ms algorithmic delay is unchanged.
 

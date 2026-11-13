@@ -65,6 +65,45 @@ cycles per hop:
 These are same-session relative measurements, not the absolute latencies in
 the table above, and the hosts differ from the i7-8700 used there.
 
+### Worker thread
+
+A context created with `DPDFNET_CREATE_WORKER_THREAD` runs the ERB and DF
+branches on two threads (see [API.md](API.md#worker-thread)). Outputs are
+bit-identical. Against a single-threaded context of the preceding release,
+both from PGO release builds on a Core i5-12600K with the process pinned to
+two P-cores (CPUs 2 and 4, separate physical cores) on a desktop that was
+otherwise in use:
+
+| Schedule | Model | Wall time per hop | Process CPU per hop |
+| --- | --- | ---: | ---: |
+| Continuous, interleaved blocks | `dpdfnet2_48khz_hr` | **−39.5%** (288.4 → 175.0 µs) | +18.9% |
+| Continuous, interleaved blocks | `dpdfnet8_48khz_hr` | **−44.3%** (657.9 → 366.9 µs) | +11.2% |
+| One hop every 10 ms, fresh processes | `dpdfnet2_48khz_hr` | **−24% to −33%** (400–427 → 285–305 µs) | +49% to +63% |
+| One hop every 10 ms, fresh processes | `dpdfnet8_48khz_hr` | **−38%** (821–824 → 508 µs) | +25% to +29% |
+
+Continuous rows are medians of 60 interleaved 50-hop blocks per model. Paced
+rows are two alternating rounds of 2,500 timed hops per process, so they span
+a range. Paced hops cost more CPU because the helper wakes ahead of each
+expected hop and spins briefly, which keeps its core ready. In the paced runs
+the worker's p99 was 450–876 µs against 589–1,122 µs single-threaded; 33 of
+10,000 worker hops exceeded 1 ms against 76 single-threaded, but the longest
+worker hop (2.5 ms) was longer than the longest single-threaded one (1.8 ms).
+On a Zen 3 VM (Ryzen 5 5600X), the same build gave −45.0% (model 8) and
+−41.9% (model 2) continuous. A short paced run there (1,000 hops per
+process, VM otherwise quiet) gave −52% and −41%, with no worker hop over
+1 ms. An earlier paced run, made while other workloads kept that VM busy and
+before back-off was added, had 12% of worker hops over 1 ms; that case was
+not measured again.
+
+The single-threaded path of this build matched the previous release within
+noise (−0.2% and −0.7%). Two SMT siblings of one core gave about −12% for
++78% CPU, and a single allowed CPU gave no change. With a busy-loop process on
+each of the two allowed CPUs, the helper is often preempted; the context then
+backs off to single-threaded hops (see [API.md](API.md#worker-thread)) and
+its mean stayed at single-threaded level, where without back-off it was 6–18%
+slower. Other machines, loads and schedulers will differ; measure with
+`build/dpdfnet_benchmark 8 models/dpdfnet8_48khz_hr/weights.f32 1000 paced-worker`.
+
 ### Benchmark history and comparisons
 
 The separate [packaging comparison](../validation/package_timing.json) used
@@ -88,8 +127,9 @@ separate caller overhead from machine/session effects. Mean ± SD improves the
 description of variability; it does not establish an optimization gain.
 
 For the current fixed-W7A8-only implementation, `dpdfnet_owned_bytes()`
-reports **3,984,300 bytes** (model 2) and **5,325,420 bytes** (model 8),
-including the 16-byte public API wrapper. These exact owned-allocation counts
+reports **3,984,316 bytes** (model 2) and **5,325,436 bytes** (model 8),
+including the 16-byte public API wrapper. Worker-thread contexts add a second
+arena and the thread handle: **4,863,548** and **6,302,972 bytes**. These exact owned-allocation counts
 were checked against both bundled weight files on an x86-64 release build;
 they are **not** the historical RSS measurements in the table above. Caller
 state requires another 225,744 or 360,912 bytes, plus spectral/audio buffers
@@ -134,12 +174,18 @@ model**, including flush hops. Reset replay and independent concurrent contexts
 also match. This broader check preserves outputs; its 65 files were not all
 scored for perceptual quality.
 
-The **22 baseline contract tests** cover the public API, both model lifetimes,
+Worker-thread contexts were not run against these fixtures. Their exactness
+rests on the contracts below, which compare them hop by hop with
+single-threaded contexts.
+
+The **23 baseline contract tests** cover the public API, both model lifetimes,
 weight ownership, reset, in-place processing, graph layouts, scalar numerical
 oracles, the channel-major pointwise kernel and guarded assembly
-boundaries/FP control modes. When AVX-VNNI is available, seven additional
-contracts exercise its specialized kernels. The current kernels pass all 29 in
-a VNNI-enabled release build and all 22 in the AVX2-only fallback build. Separate installed shared/static CMake
+boundaries/FP control modes. They also compare worker-thread contexts with
+single-threaded ones bit for bit in all eight FP control modes, with arena
+contents scrambled before every hop. When AVX-VNNI is available, seven additional
+contracts exercise its specialized kernels. The current kernels pass all 30 in
+a VNNI-enabled release build and all 23 in the AVX2-only fallback build. Separate installed shared/static CMake
 consumers build and run. The shared kernel consolidation also matches the
 accepted per-model C sources after preprocessing.
 
