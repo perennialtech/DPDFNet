@@ -50,8 +50,6 @@
 #define dpdf_qmatrix dpdfnet8_private_qmatrix
 #define dpdf_transpose_avx2 dpdfnet8_private_transpose_avx2
 #define dpdf_transpose_fn dpdfnet8_private_transpose_fn
-#define dpdf_transpose_relu_avx2 dpdfnet8_private_transpose_relu_avx2
-#define dpdf_transpose_relu_scalar dpdfnet8_private_transpose_relu_scalar
 #define dpdf_transpose_scalar dpdfnet8_private_transpose_scalar
 
 /* Optional INT8 instruction variants; still private per model. */

@@ -396,27 +396,24 @@ for (int i=0;i<30720;++i) (m->arena+38512)[i]=((m->arena+7792)[i]>0?(m->arena+77
 /* 48: Conv /model/enc/erb_conv1/erb_conv1.0/Conv */
 dpdf_convop_run(m->conv[1],(m->arena+38512),(m->arena+4896));
 /* 49: Conv /model/enc/erb_conv1/erb_conv1.1/Conv */
-dpdf_transpose_avx2((m->arena+4896),(m->arena+25376),64,160);
+dpdf_transpose_avx2((m->arena+4896),(m->arena+25376),64,160,64,0);
 dpdf_dense_run(m->dense[0],(m->arena+25376),(m->arena+69232),160);
-dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),160,64);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+4896),160,64,160,1);
 /* 50: Relu /model/enc/erb_conv1/erb_conv1.3/Relu */
-for (int i=0;i<10240;++i) (m->arena+4896)[i]=((m->arena+15136)[i]>0?(m->arena+15136)[i]:0.0f);
 /* 51: Conv /model/enc/erb_conv2/erb_conv2.0/Conv */
 dpdf_convop_run(m->conv[2],(m->arena+4896),(m->arena+69232));
 /* 52: Conv /model/enc/erb_conv2/erb_conv2.1/Conv */
-dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),64,80);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+15136),64,80,64,0);
 dpdf_dense_run(m->dense[1],(m->arena+15136),(m->arena+20256),80);
-dpdf_transpose_avx2((m->arena+20256),(m->arena+74352),80,64);
+dpdf_transpose_avx2((m->arena+20256),(m->arena+69232),80,64,80,1);
 /* 53: Relu /model/enc/erb_conv2/erb_conv2.3/Relu */
-for (int i=0;i<5120;++i) (m->arena+69232)[i]=((m->arena+74352)[i]>0?(m->arena+74352)[i]:0.0f);
 /* 54: Conv /model/enc/erb_conv3/erb_conv3.0/Conv */
 dpdf_convop_run(m->conv[3],(m->arena+69232),(m->arena+74352));
 /* 55: Conv /model/enc/erb_conv3/erb_conv3.1/Conv */
-dpdf_transpose_avx2((m->arena+74352),(m->arena+15136),64,40);
+dpdf_transpose_avx2((m->arena+74352),(m->arena+15136),64,40,64,0);
 dpdf_dense_run(m->dense[2],(m->arena+15136),(m->arena+17696),40);
-dpdf_transpose_avx2((m->arena+17696),(m->arena+76912),40,64);
+dpdf_transpose_avx2((m->arena+17696),(m->arena+74352),40,64,40,1);
 /* 56: Relu /model/enc/erb_conv3/erb_conv3.3/Relu */
-for (int i=0;i<2560;++i) (m->arena+74352)[i]=((m->arena+76912)[i]>0?(m->arena+76912)[i]:0.0f);
 /* 57: Slice /model/enc/dprnn_erb/blocks.0/inter_gru/Slice */
 /* 58: DpdfDprnn /model/enc/dprnn_erb/blocks.0/Native */
 if (dpdf_process_layout(m->blocks[0],(m->arena+74352),(state_in+2020),(m->arena+76912),state_out+2020,2)) return -1;
@@ -445,19 +442,17 @@ dpdf_convop_run(m->conv[5],((m->arena+2144)+288),(m->arena+25888));
 for (int b=0;b<1;++b) memcpy((m->arena+28960)+b*6144+0,(m->arena+22816)+b*3072,3072*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+28960)+b*6144+3072,(m->arena+25888)+b*3072,3072*sizeof(float));
 /* 74: Conv /model/enc/df_conv0/df_conv0.2/Conv */
-dpdf_transpose_avx2((m->arena+28960),(m->arena+79472),64,96);
+dpdf_transpose_avx2((m->arena+28960),(m->arena+79472),64,96,64,0);
 dpdf_dense_run(m->dense[3],(m->arena+79472),(m->arena+85616),96);
-dpdf_transpose_avx2((m->arena+85616),(m->arena+22816),96,64);
+dpdf_transpose_avx2((m->arena+85616),(m->arena+28960),96,64,96,1);
 /* 75: Relu /model/enc/df_conv0/df_conv0.4/Relu */
-for (int i=0;i<6144;++i) (m->arena+28960)[i]=((m->arena+22816)[i]>0?(m->arena+22816)[i]:0.0f);
 /* 76: Conv /model/enc/df_conv1/df_conv1.0/Conv */
 dpdf_convop_run(m->conv[6],(m->arena+28960),(m->arena+35104));
 /* 77: Conv /model/enc/df_conv1/df_conv1.1/Conv */
-dpdf_transpose_avx2((m->arena+35104),(m->arena+25888),64,48);
+dpdf_transpose_avx2((m->arena+35104),(m->arena+25888),64,48,64,0);
 dpdf_dense_run(m->dense[4],(m->arena+25888),(m->arena+76912),48);
-dpdf_transpose_avx2((m->arena+76912),(m->arena+22816),48,64);
+dpdf_transpose_avx2((m->arena+76912),(m->arena+25888),48,64,48,1);
 /* 78: Relu /model/enc/df_conv1/df_conv1.3/Relu */
-for (int i=0;i<3072;++i) (m->arena+25888)[i]=((m->arena+22816)[i]>0?(m->arena+22816)[i]:0.0f);
 /* 79: Slice /model/enc/dprnn_df/blocks.0/inter_gru/Slice */
 /* 80: DpdfDprnn /model/enc/dprnn_df/blocks.0/Native */
 if (dpdf_process_layout(m->blocks[2],(m->arena+25888),(state_in+7716),(m->arena+22816),state_out+7716,2)) return -1;
@@ -586,19 +581,12 @@ for (int i=0;i<2560;++i) (m->arena+22816)[i]=(m->arena+74352)[i]+(m->arena+25376
 dpdf_convop_run(m->conv[8],(m->arena+22816),(m->arena+74352));
 /* 194: Conv /model/erb_dec/convt3/convt3.0/convs.1/Conv */
 dpdf_convop_run(m->conv[9],(m->arena+22816),(m->arena+25376));
-/* 195: Concat /model/erb_dec/convt3/convt3.0/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+79984)+b*5120+0,(m->arena+74352)+b*2560,2560*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+79984)+b*5120+2560,(m->arena+25376)+b*2560,2560*sizeof(float));
-/* 196: Reshape /model/erb_dec/convt3/convt3.0/Reshape */
-/* 197: Transpose /model/erb_dec/convt3/convt3.0/Transpose */
-for (int t1=0;t1<64;++t1) for (int t3=0;t3<40;++t3) for (int t4=0;t4<2;++t4) (m->arena+22816)[t1*80+t3*2+t4*1]=(m->arena+79984)[t1*40+t3*1+t4*2560];
-/* 198: Reshape /model/erb_dec/convt3/convt3.0/Reshape_1 */
 /* 199: Conv /model/erb_dec/convt3/convt3.1/Conv */
-dpdf_transpose_avx2((m->arena+22816),(m->arena+85104),64,80);
+dpdf_transpose_avx2((m->arena+74352),(m->arena+85104)+0,64,40,128,0);
+dpdf_transpose_avx2((m->arena+25376),(m->arena+85104)+64,64,40,128,0);
 dpdf_dense_run(m->dense[171],(m->arena+85104),(m->arena+91760),80);
-dpdf_transpose_avx2((m->arena+91760),(m->arena+79984),80,64);
+dpdf_transpose_avx2((m->arena+91760),(m->arena+22816),80,64,80,1);
 /* 200: Relu /model/erb_dec/convt3/convt3.3/Relu */
-for (int i=0;i<5120;++i) (m->arena+22816)[i]=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f);
 /* 201: Conv /model/erb_dec/conv2p/conv2p.0/Conv */
 dpdf_convop_run(m->conv[10],(m->arena+69232),(m->arena+79984));
 /* 202: Relu /model/erb_dec/conv2p/conv2p.2/Relu */
@@ -609,19 +597,12 @@ for (int i=0;i<5120;++i) (m->arena+79984)[i]=(m->arena+69232)[i]+(m->arena+22816
 dpdf_convop_run(m->conv[11],(m->arena+79984),(m->arena+22816));
 /* 205: Conv /model/erb_dec/convt2/convt2.0/convs.1/Conv */
 dpdf_convop_run(m->conv[12],(m->arena+79984),(m->arena+69232));
-/* 206: Concat /model/erb_dec/convt2/convt2.0/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+79984)+b*10240+0,(m->arena+22816)+b*5120,5120*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+79984)+b*10240+5120,(m->arena+69232)+b*5120,5120*sizeof(float));
-/* 207: Reshape /model/erb_dec/convt2/convt2.0/Reshape */
-/* 208: Transpose /model/erb_dec/convt2/convt2.0/Transpose */
-for (int t1=0;t1<64;++t1) for (int t3=0;t3<80;++t3) for (int t4=0;t4<2;++t4) (m->arena+96880)[t1*160+t3*2+t4*1]=(m->arena+79984)[t1*80+t3*1+t4*5120];
-/* 209: Reshape /model/erb_dec/convt2/convt2.0/Reshape_1 */
 /* 210: Conv /model/erb_dec/convt2/convt2.1/Conv */
-dpdf_transpose_avx2((m->arena+96880),(m->arena+107120),64,160);
+dpdf_transpose_avx2((m->arena+22816),(m->arena+107120)+0,64,80,128,0);
+dpdf_transpose_avx2((m->arena+69232),(m->arena+107120)+64,64,80,128,0);
 dpdf_dense_run(m->dense[172],(m->arena+107120),(m->arena+117360),160);
-dpdf_transpose_avx2((m->arena+117360),(m->arena+79984),160,64);
+dpdf_transpose_avx2((m->arena+117360),(m->arena+90224),160,64,160,1);
 /* 211: Relu /model/erb_dec/convt2/convt2.3/Relu */
-for (int i=0;i<10240;++i) (m->arena+90224)[i]=((m->arena+79984)[i]>0?(m->arena+79984)[i]:0.0f);
 /* 212: Conv /model/erb_dec/conv1p/conv1p.0/Conv */
 dpdf_convop_run(m->conv[13],(m->arena+4896),(m->arena+79984));
 /* 213: Relu /model/erb_dec/conv1p/conv1p.2/Relu */
@@ -634,20 +615,13 @@ dpdf_convop_run(m->conv[14],(m->arena+79984),(m->arena+4896));
 dpdf_convop_run(m->conv[15],(m->arena+79984),(m->arena+90224));
 /* 217: Conv /model/erb_dec/convt1/convt1.0/convs.2/Conv */
 dpdf_convop_run(m->conv[16],(m->arena+79984),(m->arena+100464));
-/* 218: Concat /model/erb_dec/convt1/convt1.0/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+127600)+b*30720+0,(m->arena+4896)+b*10240,10240*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+127600)+b*30720+10240,(m->arena+90224)+b*10240,10240*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+127600)+b*30720+20480,(m->arena+100464)+b*10240,10240*sizeof(float));
-/* 219: Reshape /model/erb_dec/convt1/convt1.0/Reshape */
-/* 220: Transpose /model/erb_dec/convt1/convt1.0/Transpose */
-for (int t1=0;t1<64;++t1) for (int t3=0;t3<160;++t3) for (int t4=0;t4<3;++t4) (m->arena+79984)[t1*480+t3*3+t4*1]=(m->arena+127600)[t1*160+t3*1+t4*10240];
-/* 221: Reshape /model/erb_dec/convt1/convt1.0/Reshape_1 */
 /* 222: Conv /model/erb_dec/convt1/convt1.1/Conv */
-dpdf_transpose_avx2((m->arena+79984),(m->arena+158320),64,480);
+dpdf_transpose_avx2((m->arena+4896),(m->arena+158320)+0,64,160,192,0);
+dpdf_transpose_avx2((m->arena+90224),(m->arena+158320)+64,64,160,192,0);
+dpdf_transpose_avx2((m->arena+100464),(m->arena+158320)+128,64,160,192,0);
 dpdf_dense_run(m->dense[173],(m->arena+158320),(m->arena+189040),480);
-dpdf_transpose_avx2((m->arena+189040),(m->arena+110704),480,64);
+dpdf_transpose_avx2((m->arena+189040),(m->arena+79984),480,64,480,1);
 /* 223: Relu /model/erb_dec/convt1/convt1.3/Relu */
-for (int i=0;i<30720;++i) (m->arena+79984)[i]=((m->arena+110704)[i]>0?(m->arena+110704)[i]:0.0f);
 /* 224: Conv /model/erb_dec/conv0p/conv0p.0/Conv */
 dpdf_convop_run(m->conv[17],(m->arena+38512),(m->arena+110704));
 /* 225: Relu /model/erb_dec/conv0p/conv0p.2/Relu */
@@ -720,11 +694,10 @@ dpdf_convop_run(m->conv[20],((m->arena+79984)+15360),(m->arena+2144));
 for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+0,(m->arena+17952)+b*480,480*sizeof(float));
 for (int b=0;b<1;++b) memcpy((m->arena+69152)+b*960+480,(m->arena+2144)+b*480,480*sizeof(float));
 /* 289: Conv /model/df_dec/df_convp/df_convp.2/Conv */
-dpdf_transpose_avx2((m->arena+69152),(m->arena+71072),10,96);
+dpdf_transpose_avx2((m->arena+69152),(m->arena+71072),10,96,10,0);
 dpdf_dense_run(m->dense[202],(m->arena+71072),(m->arena+72032),96);
-dpdf_transpose_avx2((m->arena+72032),(m->arena+70112),96,10);
+dpdf_transpose_avx2((m->arena+72032),(m->arena+69152),96,10,96,1);
 /* 290: Relu /model/df_dec/df_convp/df_convp.4/Relu */
-for (int i=0;i<960;++i) (m->arena+69152)[i]=((m->arena+70112)[i]>0?(m->arena+70112)[i]:0.0f);
 /* 291: Transpose /model/df_dec/Transpose */
 for (int t2=0;t2<96;++t2) for (int t3=0;t3<10;++t3) (m->arena+70112)[t2*10+t3*1]=(m->arena+69152)[t2*1+t3*96];
 /* 292: Reshape /model/df_dec/df_out/df_out.0/Reshape */

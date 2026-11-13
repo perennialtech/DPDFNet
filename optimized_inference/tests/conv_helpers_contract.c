@@ -22,7 +22,6 @@ static float ordinary(uint32_t *seed) {
     return (float)((int)(next(seed)%20001u)-10000)*0.0001f;
 }
 
-#ifdef DPDF_TRANSPOSE_RELU
 static int transpose_check(int rows,int cols,int pattern,int avx,uint32_t *seed) {
     size_t count=(size_t)rows*cols;
     float *x=malloc((count+2)*sizeof(float)),*before=malloc((count+2)*sizeof(float));
@@ -44,12 +43,12 @@ static int transpose_check(int rows,int cols,int pattern,int avx,uint32_t *seed)
         expected[c*rows+r]=x[1+r*cols+c];
     for (size_t i=0;i<count;++i) expected[i]=expected[i]>0?expected[i]:0.0f;
 #ifdef DPDF_X86_DISPATCH
-    if (avx) dpdf_transpose_relu_avx2(x+1,y+1,rows,cols);
+    if (avx) dpdf_transpose_avx2(x+1,y+1,rows,cols,rows,1);
     else
 #else
     (void)avx;
 #endif
-    dpdf_transpose_relu_scalar(x+1,y+1,rows,cols);
+    dpdf_transpose_scalar(x+1,y+1,rows,cols,rows,1);
     int ok=!memcmp(before,x,(count+2)*sizeof(float)) &&
            !memcmp(expected,y+1,count*sizeof(float)) &&
            !memcmp(y,before,sizeof(float)) && !memcmp(y+count+1,before,sizeof(float));
@@ -57,7 +56,6 @@ static int transpose_check(int rows,int cols,int pattern,int avx,uint32_t *seed)
     free(x);free(before);free(y);free(expected);
     return ok;
 }
-#endif
 
 #ifdef DPDF_CONV_PAIR
 static int pair_check(int cig,int kh,int cog,int group,int width,int pattern,int avx,uint32_t *seed) {
@@ -117,7 +115,6 @@ int main(void) {
 #ifdef DPDF_X86_DISPATCH
     if (dpdf_has_avx2()) implementations=2;
 #endif
-#ifdef DPDF_TRANSPOSE_RELU
     const int dimensions[]={1,7,8,9,15,16,17,31,32,33,40,48,64,80,96,160,480};
     const int dimension_count=(int)(sizeof(dimensions)/sizeof(dimensions[0]));
     for (int avx=0;avx<implementations;++avx)
@@ -126,7 +123,6 @@ int main(void) {
                 if (!transpose_check(dimensions[r],dimensions[c],pattern,avx,&seed)) return 1;
                 ++transpose_calls;
             }
-#endif
 #ifdef DPDF_CONV_PAIR
     const int widths[]={7,8,9,15,16,17,31,32,33,63,64,65,96,97};
     const int inputs[]={1,3,32},heights[]={1,3,5},outputs[]={1,2,3,5};
