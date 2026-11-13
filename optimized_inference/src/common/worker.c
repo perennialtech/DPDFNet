@@ -26,11 +26,12 @@ enum { SPIN=1u<<22 };
 enum { YIELD=1u<<16 };
 enum { IDLE, POSTED, RUNNING, DONE };
 /* Pre-wake: with a steady hop cadence the helper sets a timer to wake ahead
- * of the next expected hop and spins until it starts, or until WINDOW (plus
- * twice the hop jitter) after it. The lead covers the timer's observed
- * lateness, twice the hop jitter and MARGIN, within [MIN_LEAD,MAX_LEAD]. Cadences outside
- * [MIN_PERIOD,MAX_PERIOD] or with jitter above a quarter period are not
- * predicted. */
+ * of the next expected hop and spins until it starts, or until WINDOW plus
+ * twice the hop jitter (at most MAX_LEAD) after it. The lead covers the
+ * timer's observed lateness, twice the hop jitter and MARGIN, within
+ * [MIN_LEAD,MAX_LEAD], so one pre-wake spins for at most 800 us. Cadences
+ * outside [MIN_PERIOD,MAX_PERIOD] or with jitter above an eighth of the
+ * period are not predicted. */
 static const int64_t MARGIN=30000,MIN_LEAD=40000,MAX_LEAD=300000,WINDOW=200000,
                      MIN_PERIOD=100000,MAX_PERIOD=100000000;
 /* Back-off. A hop loses when the caller waited for a task longer than the
@@ -59,6 +60,7 @@ struct dpdf_worker {
                             * of a hop's tasks, in posting order (TSC). */
     int loss,joins,stolen,hopped,score,paused,pause,since; /* Caller-side back-off. */
     pthread_t thread;
+    pid_t pid; /* The creating process; a forked child has no helper. */
 };
 
 static int64_t now_ns(void) {
@@ -185,12 +187,15 @@ dpdf_worker *dpdf_worker_create(void) {
     pthread_sigmask(SIG_SETMASK,&old,NULL);
     pthread_attr_destroy(&attr);
     if (failed) { free(w); return NULL; }
+    w->pid=getpid();
     pthread_setname_np(w->thread,"dpdfnet-lane");
     return w;
 }
 
 void dpdf_worker_destroy(dpdf_worker *w) {
     if (!w) return;
+    /* After fork the child has no helper to stop; its stack is leaked. */
+    if (getpid()!=w->pid) { free(w); return; }
     atomic_store_explicit(&w->quit,1,memory_order_seq_cst);
     atomic_fetch_add_explicit(&w->wake,1,memory_order_seq_cst);
     futex_wake(&w->wake);
@@ -201,6 +206,7 @@ void dpdf_worker_destroy(dpdf_worker *w) {
 size_t dpdf_worker_bytes(void) { return (sizeof(dpdf_worker)+63)/64*64; }
 
 int dpdf_worker_begin(dpdf_worker *w) {
+    if (getpid()!=w->pid) return 0; /* A forked child runs hops alone. */
     const int64_t now=now_ns();
     if (w->last) {
         const int64_t interval=now-w->last,error=interval-w->period;
@@ -214,8 +220,8 @@ int dpdf_worker_begin(dpdf_worker *w) {
         }
     }
     w->last=now;
-    const int steady=w->period>=MIN_PERIOD && w->period<=MAX_PERIOD && w->jitter*4<=w->period;
-    atomic_store_explicit(&w->jitter2,2*w->jitter,memory_order_relaxed);
+    const int steady=w->period>=MIN_PERIOD && w->period<=MAX_PERIOD && w->jitter*8<=w->period;
+    atomic_store_explicit(&w->jitter2,2*w->jitter<MAX_LEAD ? 2*w->jitter : MAX_LEAD,memory_order_relaxed);
     if (w->hopped) {
         w->hopped=0; ++w->since;
         const int add=w->loss ? SLOW : w->stolen==w->joins ? IDLE_HOP : 0;

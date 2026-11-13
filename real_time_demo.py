@@ -43,9 +43,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--native-library", type=Path)
     parser.add_argument("--native-weights", type=Path)
     parser.add_argument(
-        "--native-worker-thread",
+        "--native-single-thread",
         action="store_true",
-        help="Run the native model's two branches on a helper thread",
+        help="Run native inference on the calling thread only",
     )
     args = parser.parse_args(argv)
     # Must be set before creating ImageItem/plots so spectrogram arrays
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> None:
     if native and (not args.native_library or not args.native_weights):
         parser.error("native needs --native-library and --native-weights")
     if not native and (
-        args.native_library or args.native_weights or args.native_worker_thread
+        args.native_library or args.native_weights or args.native_single_thread
     ):
         parser.error("native options require --backend native")
     onnx_path = (
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
         backend=args.backend,
         native_library=args.native_library,
         native_weights=args.native_weights,
-        native_worker_thread=args.native_worker_thread,
+        native_single_thread=args.native_single_thread,
     )
     sample_rate, hop_size = enhancer.sample_rate, enhancer.hop_size
     buffer_seconds = float(BUFFER_SECONDS)

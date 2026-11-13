@@ -25,9 +25,9 @@ def main() -> None:
     parser.add_argument("--native-library", type=Path)
     parser.add_argument("--native-weights", type=Path)
     parser.add_argument(
-        "--native-worker-thread",
+        "--native-single-thread",
         action="store_true",
-        help="Run the native model's two branches on a helper thread",
+        help="Run native inference on the calling thread only",
     )
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--warmup-frames", type=int, default=100)
@@ -54,10 +54,8 @@ def main() -> None:
             parser.error("native needs --native-library and --native-weights, not --onnx-path")
     elif not args.onnx_path or args.native_library or args.native_weights:
         parser.error("onnx/openvino needs --onnx-path, not native paths")
-    if args.native_worker_thread and args.backend != "native":
-        parser.error("--native-worker-thread needs --backend native")
-    if args.native_worker_thread and args.cpu is not None and len(args.cpu) < 2:
-        parser.error("--native-worker-thread needs two CPUs in --cpu")
+    if args.native_single_thread and args.backend != "native":
+        parser.error("--native-single-thread needs --backend native")
     if args.seconds <= 0 or args.warmup_frames < 0:
         parser.error("--seconds must be positive and --warmup-frames non-negative")
     if args.cpu is not None:
@@ -94,7 +92,7 @@ def main() -> None:
         kwargs.update(
             native_library=args.native_library,
             native_weights=args.native_weights,
-            native_worker_thread=args.native_worker_thread,
+            native_single_thread=args.native_single_thread,
         )
     enhancer = StreamEnhancer(model=args.model, onnx_path=args.onnx_path, **kwargs)
     setup_ms = (time.perf_counter_ns() - start) / 1e6
@@ -140,7 +138,7 @@ def main() -> None:
             ).read_bytes()
         ).hexdigest(),
         "backend": args.backend,
-        "native_worker_thread": args.native_worker_thread,
+        "native_single_thread": args.native_single_thread,
         "paced": args.paced,
         "sample_rate": sr,
         "hop_samples": hop,

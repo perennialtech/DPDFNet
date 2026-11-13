@@ -5,8 +5,8 @@ int main(int argc, char **argv) {
     float *weights = read_weights(argv[1], info);
     float *state = calloc(info->state_floats, sizeof(float));
     if (!weights || !state) { free(weights); free(state); return 1; }
-    /* Both schedules: the worker context runs its lanes on two threads. */
-    const uint32_t modes[] = {0, DPDFNET_CREATE_WORKER_THREAD};
+    /* Both schedules: the default context runs its lanes on two threads. */
+    const uint32_t modes[] = {0, DPDFNET_CREATE_SINGLE_THREAD};
     const float scales[] = {1.0f, 0.001f, 8.0f, 0.0f};
     float spec[962];
     for (size_t mode = 0; mode < 2; ++mode) {

@@ -1,8 +1,14 @@
-/* Worker-thread contexts through the public API: bit-identical spectra,
- * state and raised exception flags against single-threaded contexts in every
- * rounding mode with and without FTZ/DAZ, in-place and out-of-place buffers,
- * and repeated creation and destruction. */
+/* Default (worker-thread) contexts through the public API: bit-identical
+ * spectra, state and raised exception flags against single-threaded contexts
+ * in every rounding mode with and without FTZ/DAZ, in-place and out-of-place
+ * buffers, repeated creation and destruction, the single-CPU fallback, and
+ * use and destruction of an inherited context after fork. */
+#define _GNU_SOURCE
 #include "../tools/support.h"
+#include <sched.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <fenv.h>
 #include <immintrin.h>
 #include <string.h>
@@ -18,11 +24,11 @@ int main(int argc, char **argv) {
         float *w = read_weights(argv[index + 1], info);
         CHECK(w);
         CHECK(!dpdfnet_create_with_flags(id, w, info->weight_floats, 2u));
-        CHECK(!dpdfnet_create_with_flags(id, w, info->weight_floats - 1, DPDFNET_CREATE_WORKER_THREAD));
-        CHECK(!dpdfnet_create_with_flags((dpdfnet_model_id)3, w, info->weight_floats, DPDFNET_CREATE_WORKER_THREAD));
+        CHECK(!dpdfnet_create_with_flags(id, w, info->weight_floats - 1, 0));
+        CHECK(!dpdfnet_create_with_flags((dpdfnet_model_id)3, w, info->weight_floats, 0));
         /* Contexts that never process, or process once, still shut down. */
         for (int round = 0; round < 24; ++round) {
-            dpdfnet_model *m = dpdfnet_create_with_flags(id, w, info->weight_floats, DPDFNET_CREATE_WORKER_THREAD);
+            dpdfnet_model *m = dpdfnet_create(id, w, info->weight_floats);
             CHECK(m);
             if (round % 2) {
                 float *s = malloc(info->state_floats * sizeof(float)), spec[962];
@@ -33,10 +39,23 @@ int main(int argc, char **argv) {
             }
             dpdfnet_destroy(m);
         }
-        dpdfnet_model *single = dpdfnet_create_with_flags(id, w, info->weight_floats, 0);
-        dpdfnet_model *worker = dpdfnet_create_with_flags(id, w, info->weight_floats, DPDFNET_CREATE_WORKER_THREAD);
-        CHECK(single && worker);
-        CHECK(dpdfnet_owned_bytes(worker) > dpdfnet_owned_bytes(single));
+        dpdfnet_model *single = dpdfnet_create_with_flags(id, w, info->weight_floats, DPDFNET_CREATE_SINGLE_THREAD);
+        CHECK(single);
+        /* With one allowed CPU, the default context has no helper. */
+        cpu_set_t allowed, one;
+        CHECK(sched_getaffinity(0, sizeof(allowed), &allowed) == 0);
+        int first = 0;
+        while (!CPU_ISSET(first, &allowed)) ++first;
+        CPU_ZERO(&one); CPU_SET(first, &one);
+        CHECK(sched_setaffinity(0, sizeof(one), &one) == 0);
+        dpdfnet_model *pinned = dpdfnet_create(id, w, info->weight_floats);
+        CHECK(sched_setaffinity(0, sizeof(allowed), &allowed) == 0);
+        CHECK(pinned && dpdfnet_owned_bytes(pinned) == dpdfnet_owned_bytes(single));
+        dpdfnet_destroy(pinned);
+        dpdfnet_model *worker = dpdfnet_create(id, w, info->weight_floats);
+        CHECK(worker);
+        if (CPU_COUNT(&allowed) >= 2) CHECK(dpdfnet_owned_bytes(worker) > dpdfnet_owned_bytes(single));
+        else puts("One allowed CPU: comparing two single-threaded contexts");
         free(w);
         size_t n = info->state_floats;
         float *a = malloc(n * sizeof(float)), *b = malloc(n * sizeof(float)), *next = malloc(n * sizeof(float));
@@ -68,9 +87,29 @@ int main(int argc, char **argv) {
             CHECK((_mm_getcsr() & 0xffc0u) == controls);
         }
         _mm_setcsr(original);
+        /* A forked child has no helper: an inherited context still matches and
+         * can be destroyed. The alarm turns a hang into a failure. */
+        fflush(NULL);
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (child == 0) {
+            alarm(10);
+            CHECK(dpdfnet_init_state(id, a) == 0 && dpdfnet_init_state(id, b) == 0);
+            for (size_t frame = 0; frame < 6; ++frame) {
+                synthetic_spectrum(x, frame, 1.0f);
+                CHECK(dpdfnet_process(single, x, a, y, a) == 0);
+                CHECK(dpdfnet_process(worker, x, b, z, b) == 0);
+                CHECK(!memcmp(y, z, sizeof(y)) && !memcmp(a, b, n * sizeof(float)));
+            }
+            dpdfnet_destroy(worker);
+            _exit(0);
+        }
+        int status = 0;
+        CHECK(waitpid(child, &status, 0) == child);
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
         dpdfnet_destroy(single); dpdfnet_destroy(worker);
         free(a); free(b); free(next);
     }
-    puts("Worker contexts match single-threaded contexts in every FP control mode");
+    puts("Default contexts match single-threaded contexts in every FP control mode");
     return 0;
 }

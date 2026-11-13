@@ -212,14 +212,16 @@ enhancer = dpdfnet.StreamEnhancer(
 )
 ```
 
-Pass `native_worker_thread=True` to give the native context one helper thread.
-It runs the model's two branches concurrently, so each hop finishes 25–45%
-sooner on two free cores, with identical output and more total CPU time. The
-helper takes the CPU affinity and scheduling priority of the thread that
-constructs the enhancer.
+The native context owns one helper thread that runs the model's two branches
+concurrently, so each hop finishes 25–45% sooner on two free cores, with
+identical output and more total CPU time. The helper takes the CPU affinity
+and scheduling priority of the thread that constructs the enhancer, not of
+the audio callback thread: if the callback runs at raised priority, the
+helper does not. Pass `native_single_thread=True` to run on the calling
+thread only.
 
 The existing microphone demo accepts `--backend native`, `--native-library`,
-`--native-weights` and `--native-worker-thread`; so does
+`--native-weights` and `--native-single-thread`; so does
 `benchmarks/streaming.py` for comparable end-to-end callback timings. Native inference requires the CPU and build
 environment described in the [native build guide](https://github.com/perennialtech/DPDFNet/blob/main/optimized_inference/docs/BUILD.md).
 

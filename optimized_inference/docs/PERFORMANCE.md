@@ -67,9 +67,9 @@ the table above, and the hosts differ from the i7-8700 used there.
 
 ### Worker thread
 
-A context created with `DPDFNET_CREATE_WORKER_THREAD` runs the ERB and DF
-branches on two threads (see [API.md](API.md#worker-thread)). Outputs are
-bit-identical. Against a single-threaded context of the preceding release,
+Contexts now run the ERB and DF branches on two threads by default (see
+[API.md](API.md#worker-thread)). Outputs are bit-identical. Against a
+single-threaded context of the preceding release,
 both from PGO release builds on a Core i5-12600K with the process pinned to
 two P-cores (CPUs 2 and 4, separate physical cores) on a desktop that was
 otherwise in use:
@@ -95,14 +95,15 @@ process, VM otherwise quiet) gave −52% and −41%, with no worker hop over
 before back-off was added, had 12% of worker hops over 1 ms; that case was
 not measured again.
 
-The single-threaded path of this build matched the previous release within
+The single-threaded mode of this build matched the previous release within
 noise (−0.2% and −0.7%). Two SMT siblings of one core gave about −12% for
-+78% CPU, and a single allowed CPU gave no change. With a busy-loop process on
++78% CPU. With one allowed CPU at creation, the context runs single-threaded. With a busy-loop process on
 each of the two allowed CPUs, the helper is often preempted; the context then
 backs off to single-threaded hops (see [API.md](API.md#worker-thread)) and
 its mean stayed at single-threaded level, where without back-off it was 6–18%
 slower. Other machines, loads and schedulers will differ; measure with
-`build/dpdfnet_benchmark 8 models/dpdfnet8_48khz_hr/weights.f32 1000 paced-worker`.
+`build/dpdfnet_benchmark 8 models/dpdfnet8_48khz_hr/weights.f32 1000 paced`
+and compare with the `paced-single` mode.
 
 ### Benchmark history and comparisons
 
@@ -127,9 +128,10 @@ separate caller overhead from machine/session effects. Mean ± SD improves the
 description of variability; it does not establish an optimization gain.
 
 For the current fixed-W7A8-only implementation, `dpdfnet_owned_bytes()`
-reports **3,984,316 bytes** (model 2) and **5,325,436 bytes** (model 8),
-including the 16-byte public API wrapper. Worker-thread contexts add a second
-arena and the thread handle: **4,863,548** and **6,302,972 bytes**. These exact owned-allocation counts
+reports **4,863,612 bytes** (model 2) and **6,303,036 bytes** (model 8),
+including the 16-byte public API wrapper, a second arena for the helper
+thread and its handle. Single-threaded contexts report **3,984,316** and
+**5,325,436 bytes**. These exact owned-allocation counts
 were checked against both bundled weight files on an x86-64 release build;
 they are **not** the historical RSS measurements in the table above. Caller
 state requires another 225,744 or 360,912 bytes, plus spectral/audio buffers
@@ -174,14 +176,14 @@ model**, including flush hops. Reset replay and independent concurrent contexts
 also match. This broader check preserves outputs; its 65 files were not all
 scored for perceptual quality.
 
-Worker-thread contexts were not run against these fixtures. Their exactness
-rests on the contracts below, which compare them hop by hop with
-single-threaded contexts.
+These fixture results predate the helper thread, and two-thread contexts were
+not run against the fixtures. Their exactness rests on the contracts below,
+which compare them hop by hop with single-threaded contexts.
 
 The **23 baseline contract tests** cover the public API, both model lifetimes,
 weight ownership, reset, in-place processing, graph layouts, scalar numerical
 oracles, the channel-major pointwise kernel and guarded assembly
-boundaries/FP control modes. They also compare worker-thread contexts with
+boundaries/FP control modes. They also compare default two-thread contexts with
 single-threaded ones bit for bit in all eight FP control modes, with arena
 contents scrambled before every hop. When AVX-VNNI is available, seven additional
 contracts exercise its specialized kernels. The current kernels pass all 30 in

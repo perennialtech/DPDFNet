@@ -37,7 +37,7 @@ def main():
     p.add_argument("--runs", type=int, default=32)
     p.add_argument("--hops", type=int, default=1000)
     p.add_argument("--mode", choices=("paced", "continuous"), default="paced")
-    p.add_argument("--worker-thread", action="store_true", help="Create contexts with the helper thread")
+    p.add_argument("--single-thread", action="store_true", help="Create contexts without the helper thread")
     p.add_argument("--spectra", type=Path, nargs="+", help="Rotate precomputed real-audio spectrum files")
     p.add_argument("--output", type=Path, default=ROOT / "validation/local/benchmark.json")
     args = p.parse_args()
@@ -50,7 +50,7 @@ def main():
         for size in (sizes if repeat % 2 == 0 else sizes[::-1]):
             weights = ROOT / "models" / ("dpdfnet%d_48khz_hr" % size) / "weights.f32"
             command = [str(executable), str(size), str(weights), str(args.hops),
-                       args.mode + ("-worker" if args.worker_thread else "")]
+                       args.mode + ("-single" if args.single_thread else "")]
             source = args.spectra[repeat % len(args.spectra)].resolve() if args.spectra else None
             if source: command.append(str(source))
             run = json.loads(subprocess.check_output(command, text=True))
@@ -68,7 +68,7 @@ def main():
         "weights_sha256": {str(size): hashlib.sha256((ROOT / "models" /
                               ("dpdfnet%d_48khz_hr" % size) / "weights.f32").read_bytes()).hexdigest()
                            for size in sizes},
-        "mode": args.mode, "worker_thread": args.worker_thread, "warmup_hops": 120, "timed_hops_per_run": args.hops,
+        "mode": args.mode, "single_thread": args.single_thread, "warmup_hops": 120, "timed_hops_per_run": args.hops,
         "statistic": "Mean and sample SD (n-1) of fresh-process run means; not per-hop SD or a confidence interval",
         "models": {size: {"summary": summarize(runs), "runs": runs} for size, runs in records.items()},
     }

@@ -37,9 +37,10 @@ class StreamEnhancer:
             audio. Construct the enhancer outside the audio callback.
         native_library: Path to the built C shared library, for native inference.
         native_weights: Path to the corresponding bundled native weights.
-        native_worker_thread: Give the native context one helper thread that
-            runs the model's two branches concurrently. Output is identical;
-            each hop finishes sooner at the cost of some extra CPU time.
+        native_single_thread: Run native inference on the calling thread only.
+            By default the native context has one helper thread that runs the
+            model's two branches concurrently: output is identical and each
+            hop finishes sooner, for some extra CPU time.
     """
 
     def __init__(
@@ -51,7 +52,7 @@ class StreamEnhancer:
         backend: str = "onnx",
         native_library: Optional[Union[str, Path]] = None,
         native_weights: Optional[Union[str, Path]] = None,
-        native_worker_thread: bool = False,
+        native_single_thread: bool = False,
     ) -> None:
         if backend not in {"onnx", "openvino", "native"}:
             raise ValueError("backend must be 'onnx', 'openvino', or 'native'.")
@@ -64,15 +65,15 @@ class StreamEnhancer:
 
             self._runner = NativeFrameRunner(
                 model, Path(native_library), Path(native_weights),
-                worker_thread=native_worker_thread,
+                single_thread=native_single_thread,
             )
             self._model_sr = self._runner.sample_rate
             self._win_len = self._runner.win_len
         else:
             if native_library is not None or native_weights is not None:
                 raise ValueError("native_library/native_weights need backend='native'")
-            if native_worker_thread:
-                raise ValueError("native_worker_thread needs backend='native'")
+            if native_single_thread:
+                raise ValueError("native_single_thread needs backend='native'")
             resolved = resolve_model(
                 model=model,
                 onnx_path=onnx_path,

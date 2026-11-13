@@ -11,7 +11,7 @@ import numpy as np
 
 _FLOAT_PTR = ct.POINTER(ct.c_float)
 _MODEL_IDS = {"dpdfnet2_48khz_hr": 2, "dpdfnet8_48khz_hr": 8}
-_CREATE_WORKER_THREAD = 0x1
+_CREATE_SINGLE_THREAD = 0x1
 
 
 class _ModelInfo(ct.Structure):
@@ -34,12 +34,13 @@ def _ptr(array: np.ndarray) -> _FLOAT_PTR:
 class NativeFrameRunner:
     """One C context and recurrent state, with the same frame interface as ONNX.
 
-    With ``worker_thread``, the context owns one helper thread that runs the
-    model's two branches concurrently; results are bit-identical.
+    By default the context owns one helper thread that runs the model's two
+    branches concurrently, with bit-identical results. ``single_thread`` runs
+    every hop on the calling thread instead.
     """
 
     def __init__(
-        self, model: str, library: Path, weights: Path, worker_thread: bool = False
+        self, model: str, library: Path, weights: Path, single_thread: bool = False
     ) -> None:
         self._handle = None
         if model not in _MODEL_IDS:
@@ -52,9 +53,9 @@ class NativeFrameRunner:
         lib.dpdfnet_cpu_supported.restype = ct.c_int
         lib.dpdfnet_create.argtypes = [ct.c_int, _FLOAT_PTR, ct.c_size_t]
         lib.dpdfnet_create.restype = ct.c_void_p
-        if worker_thread:
-            if not hasattr(lib, "dpdfnet_create_with_flags"):
-                raise RuntimeError("This native library has no worker-thread support")
+        # Libraries without this symbol are always single-threaded.
+        single_thread = single_thread and hasattr(lib, "dpdfnet_create_with_flags")
+        if single_thread:
             lib.dpdfnet_create_with_flags.argtypes = [
                 ct.c_int, _FLOAT_PTR, ct.c_size_t, ct.c_uint32
             ]
@@ -82,10 +83,10 @@ class NativeFrameRunner:
         if weight_array.size != info.weight_floats:
             raise ValueError("Native model weight count does not match the library")
 
-        if worker_thread:
+        if single_thread:
             self._handle = lib.dpdfnet_create_with_flags(
                 self._model_id, _ptr(weight_array), weight_array.size,
-                _CREATE_WORKER_THREAD,
+                _CREATE_SINGLE_THREAD,
             )
         else:
             self._handle = lib.dpdfnet_create(

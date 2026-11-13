@@ -1,12 +1,22 @@
+#define _GNU_SOURCE
 #include "backend.h"
+#include <sched.h>
 #include "full_model.h"
 #ifndef DPDF_MODEL_SIZE
 #error DPDF_MODEL_SIZE must identify the compiled graph.
 #endif
+/* The helper inherits this thread's CPU affinity; with a single allowed CPU
+ * it could not run alongside the caller. */
+static int one_cpu(void) {
+    cpu_set_t set;
+    return !sched_getaffinity(0, sizeof(set), &set) && CPU_COUNT(&set) < 2;
+}
 static void *create(const float *weights, size_t count, uint32_t flags) {
-    if (flags & ~(uint32_t)DPDFNET_CREATE_WORKER_THREAD) return NULL;
-    return dpdf_model_create(weights, count,
-        (flags & DPDFNET_CREATE_WORKER_THREAD) ? DPDF_MODEL_LANES | DPDF_MODEL_WORKER : 0);
+    if (flags & ~(uint32_t)DPDFNET_CREATE_SINGLE_THREAD) return NULL;
+    void *m = NULL;
+    if (!(flags & DPDFNET_CREATE_SINGLE_THREAD) && !one_cpu())
+        m = dpdf_model_create(weights, count, DPDF_MODEL_LANES | DPDF_MODEL_WORKER);
+    return m ? m : dpdf_model_create(weights, count, 0); /* Also if the thread failed. */
 }
 static int process(void *m, const float *x, const float *s, float *y, float *t) {
     return dpdf_model_process(m, x, s, y, t);

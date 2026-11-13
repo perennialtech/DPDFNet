@@ -53,7 +53,7 @@ take the arena as an argument:
 prep → [erb_enc, erb_emb ‖ df_enc, df_emb] → combine → [erb_dec, mask ‖ df_dec] → finish
 ```
 
-A worker context runs the DF sections on a second, private arena while the
+A context with a helper thread (the default) runs the DF sections on a second, private arena while the
 ERB sections use the main one. The bracketed regions run on two threads; the
 rest runs on the caller. The helper takes the shorter lane of each region
 (model 8: ERB encoder, DF decoder; model 2: DF encoder, DF decoder), so the
@@ -103,7 +103,7 @@ inside the assembly kernels; that test is what covers the data.
   pointwise convolutions and fused ReLUs. Because state is written as soon as
   its last read is done, a mid-graph `-1` (not reachable with these fixed
   shapes) would leave the state partly updated.
-- `common/worker.c` implements the optional helper thread; `private/worker.h`
+- `common/worker.c` implements the helper thread; `private/worker.h`
   documents its protocol.
 - `private/` holds kernel declarations and namespace mappings. These headers
   are not installed and do not define a consumer ABI.

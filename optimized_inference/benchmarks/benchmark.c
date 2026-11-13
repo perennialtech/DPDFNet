@@ -18,16 +18,16 @@ static int compare(const void *a, const void *b) {
 }
 int main(int argc, char **argv) {
     if (argc < 3 || argc > 6) {
-        fprintf(stderr, "Usage: %s 2|8 weights.f32 [hops=1000] [paced|continuous][-worker] [spectra.f32]\n", argv[0]); return 2;
+        fprintf(stderr, "Usage: %s 2|8 weights.f32 [hops=1000] [paced|continuous][-single] [spectra.f32]\n", argv[0]); return 2;
     }
     dpdfnet_model_id id = (dpdfnet_model_id)atoi(argv[1]);
     const dpdfnet_model_info *info = dpdfnet_get_model_info(id);
     size_t hops = argc > 3 ? (size_t)strtoul(argv[3], NULL, 10) : 1000;
     const char *mode = argc > 4 ? argv[4] : "paced";
-    int paced = !strncmp(mode, "paced", 5), worker = strstr(mode, "-worker") != NULL;
+    int paced = !strncmp(mode, "paced", 5), single = strstr(mode, "-single") != NULL;
     const char *base = paced ? "paced" : "continuous";
     if (!info || hops < 100 || hops > 1000000 || strncmp(mode, base, strlen(base)) ||
-        strcmp(mode + strlen(base), worker ? "-worker" : "")) return 2;
+        strcmp(mode + strlen(base), single ? "-single" : "")) return 2;
     size_t frame_count = 256;
     FILE *input = argc > 5 ? fopen(argv[5], "rb") : NULL;
     if (argc > 5) {
@@ -47,33 +47,36 @@ int main(int argc, char **argv) {
     size_t before = rss();
     float *weights = read_weights(argv[2], info);
     dpdfnet_model *m = weights ? dpdfnet_create_with_flags(id, weights, info->weight_floats,
-                                                               worker ? DPDFNET_CREATE_WORKER_THREAD : 0) : NULL;
+                                                               single ? DPDFNET_CREATE_SINGLE_THREAD : 0) : NULL;
     free(weights);
     if (!m || dpdfnet_init_state(id, state)) return 1;
-    double sum = 0, cpu = 0; size_t over = 0, late = 0;
+    double sum = 0; size_t over = 0, late = 0;
+    int64_t cpu_start = 0; /* Process CPU over the timed hops, helper spins included. */
     float output[962];
     int64_t deadline = nanoseconds(CLOCK_MONOTONIC);
     for (size_t i = 0; i < hops + 120; ++i) {
+        if (i == 120) cpu_start = nanoseconds(CLOCK_PROCESS_CPUTIME_ID);
         if (paced) {
             struct timespec t = {deadline / INT64_C(1000000000), deadline % INT64_C(1000000000)};
             while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL)) {}
         }
-        int64_t c0 = nanoseconds(CLOCK_PROCESS_CPUTIME_ID), t0 = nanoseconds(CLOCK_MONOTONIC);
+        int64_t t0 = nanoseconds(CLOCK_MONOTONIC);
         if (dpdfnet_process(m, frames + (i % frame_count) * 962, state, output, state)) return 1;
-        int64_t t1 = nanoseconds(CLOCK_MONOTONIC), c1 = nanoseconds(CLOCK_PROCESS_CPUTIME_ID);
+        int64_t t1 = nanoseconds(CLOCK_MONOTONIC);
         if (i >= 120) {
             double ms = (double)(t1 - t0) / 1e6; times[i - 120] = ms; sum += ms;
-            cpu += (double)(c1 - c0) / 1e6; over += ms > 10;
+            over += ms > 10;
             late += paced && t1 > deadline + INT64_C(10000000);
         }
         deadline += INT64_C(10000000);
         if (paced && t1 > deadline) deadline = t1; /* Record miss before restarting cadence. */
     }
+    double cpu = (double)(nanoseconds(CLOCK_PROCESS_CPUTIME_ID) - cpu_start) / 1e6;
     size_t after = rss(); qsort(times, hops, sizeof(double), compare);
-    printf("{\"model\":\"%s\",\"input\":\"%s\",\"mode\":\"%s\",\"worker_thread\":%s,\"hops\":%zu,"
+    printf("{\"model\":\"%s\",\"input\":\"%s\",\"mode\":\"%s\",\"single_thread\":%s,\"hops\":%zu,"
            "\"mean_ms\":%.6f,\"cpu_ms\":%.6f,\"p99_ms\":%.6f,\"max_ms\":%.6f,"
            "\"over_10ms\":%zu,\"late\":%zu,\"owned_bytes\":%zu,\"rss_bytes\":%zu,\"rss_increment_bytes\":%zd}\n",
-           info->name, input ? "file" : "synthetic", base, worker ? "true" : "false", hops,
+           info->name, input ? "file" : "synthetic", base, single ? "true" : "false", hops,
            sum / hops, cpu / hops, times[(hops * 99) / 100], times[hops - 1], over, late,
            dpdfnet_owned_bytes(m), after, (ptrdiff_t)after - (ptrdiff_t)before);
     dpdfnet_destroy(m); free(state); free(times); free(frames);
