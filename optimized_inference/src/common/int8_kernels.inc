@@ -459,6 +459,9 @@ void DPDF_QPAIR_IMPL(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,const float *
  * software-pipelined: one direction's latency-bound gates and quantization
  * sit just before the other direction's throughput-bound projection. Every
  * direction keeps its exact operation sequence. */
+#if !defined(DPDF_QFUSED64) || defined(DPDF_DISABLE_QAFFINE_ROW)
+#error "The GRU recurrence needs the fused K64x192 row kernel (DPDF_QFUSED64)."
+#endif
 void DPDF_QRECUR_IMPL(const dpdf_qmatrix *q0,const dpdf_qmatrix *q1,
         const float *intra0,const float *intra1,const float *bias0,const float *bias1,
         int f,float *bi) {
