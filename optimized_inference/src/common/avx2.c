@@ -251,7 +251,9 @@ int dpdf_depthwise_stride_avx2(const float *x,const float *w,const float *bias,f
 /* exp(x): range reduction x=n*ln(2)+r, |r|<=ln(2)/2, degree-5 Chebyshev interpolation (research)
  * evaluated by FMA. No external approximation code. Clamp affects only
  * saturated sigmoid/tanh tails. Activations are FP32 approximations, not
- * bit-identical libm functions; their error is explicitly tested. */
+ * bit-identical libm functions; their error is explicitly tested.
+ * 2^n: n is an integer in [-126,126], so n+2^23+127 is exact in every
+ * rounding mode and its low mantissa bits are the biased exponent. */
 static inline __m256 exp8(__m256 x) {
     x=_mm256_max_ps(_mm256_set1_ps(-87.0f),_mm256_min_ps(_mm256_set1_ps(87.0f),x));
     __m256 nf=_mm256_round_ps(_mm256_mul_ps(x,_mm256_set1_ps(1.4426950408889634f)),
@@ -264,7 +266,7 @@ static inline __m256 exp8(__m256 x) {
     p=_mm256_fmadd_ps(p,r,_mm256_set1_ps(0x1.fffd0a0000000p-2f));
     p=_mm256_fmadd_ps(p,r,_mm256_set1_ps(0x1.0000000000000p+0f));
     p=_mm256_fmadd_ps(p,r,_mm256_set1_ps(0x1.0000020000000p+0f));
-    __m256i e=_mm256_slli_epi32(_mm256_add_epi32(_mm256_cvttps_epi32(nf),_mm256_set1_epi32(127)),23);
+    __m256i e=_mm256_slli_epi32(_mm256_castps_si256(_mm256_add_ps(nf,_mm256_set1_ps(8388735.0f))),23);
     return _mm256_mul_ps(p,_mm256_castsi256_ps(e));
 }
 static inline __m256 exp8_nonpositive(__m256 x) {
@@ -279,7 +281,7 @@ static inline __m256 exp8_nonpositive(__m256 x) {
     p=_mm256_fmadd_ps(p,r,_mm256_set1_ps(0x1.fffd0a0000000p-2f));
     p=_mm256_fmadd_ps(p,r,_mm256_set1_ps(0x1.0000000000000p+0f));
     p=_mm256_fmadd_ps(p,r,_mm256_set1_ps(0x1.0000020000000p+0f));
-    __m256i e=_mm256_slli_epi32(_mm256_add_epi32(_mm256_cvttps_epi32(nf),_mm256_set1_epi32(127)),23);
+    __m256i e=_mm256_slli_epi32(_mm256_castps_si256(_mm256_add_ps(nf,_mm256_set1_ps(8388735.0f))),23);
     return _mm256_mul_ps(p,_mm256_castsi256_ps(e));
 }
 static inline __m256 sigmoid8(__m256 x) {
