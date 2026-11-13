@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parents[2] / "optimized_inference"
 @pytest.fixture(scope="module")
 def native_library():
     build = Path(os.environ.get("DPDFNET_NATIVE_BUILD", _ROOT / "build"))
-    library = build / "libdpdfnet.so"
+    library = build / ("libdpdfnet.dll" if os.name == "nt" else "libdpdfnet.so")
     if not library.is_file():
         pytest.skip("Native C library not built (set DPDFNET_NATIVE_BUILD)")
     return library

@@ -2,7 +2,6 @@
 #include "worker.h"
 #include <immintrin.h>
 #include <math.h>
-#include <pthread.h>
 #include <x86intrin.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,10 +10,12 @@
 
 /* A task that records where it ran and raises overflow, a flag nothing else
  * in the worker checks raises. */
-typedef struct { pthread_t thread; unsigned csr; } probe;
+/* Each thread's copy of thread_tag has its own address. */
+static _Thread_local char thread_tag;
+typedef struct { const char *thread; unsigned csr; } probe;
 static int overflow_task(void *p) {
     probe *q=p;
-    q->thread=pthread_self(); q->csr=_mm_getcsr();
+    q->thread=&thread_tag; q->csr=_mm_getcsr();
     volatile float big=1e30f; volatile float r=big*big; (void)r;
     return 7;
 }
@@ -41,7 +42,7 @@ static int worker_paths(void) {
         CHECK((after&~0x3fu)==(controls&~0x3fu));
         CHECK(after&0x08u); /* Overflow reached the caller. */
         CHECK((q.csr&~0x3fu)==(controls&~0x3fu));
-        if (pthread_equal(q.thread,pthread_self())) taken+=!helper;
+        if (q.thread==&thread_tag) taken+=!helper;
         else helped+=helper;
     }
     dpdf_worker_destroy(w);

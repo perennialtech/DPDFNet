@@ -1,15 +1,27 @@
 #define _GNU_SOURCE
 #include "backend.h"
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sched.h>
+#endif
 #include "full_model.h"
 #ifndef DPDF_MODEL_SIZE
 #error DPDF_MODEL_SIZE must identify the compiled graph.
 #endif
-/* The helper inherits this thread's CPU affinity; with a single allowed CPU
- * it could not run alongside the caller. */
+/* With a single CPU allowed to the helper, it could not run alongside the
+ * caller. On Linux the helper inherits this thread's affinity; on Windows it
+ * gets the process's. A process whose threads span processor groups reports
+ * no mask and has more than one CPU. */
 static int one_cpu(void) {
+#ifdef _WIN32
+    DWORD_PTR process, system;
+    return GetProcessAffinityMask(GetCurrentProcess(), &process, &system) &&
+           process && !(process & (process - 1));
+#else
     cpu_set_t set;
     return !sched_getaffinity(0, sizeof(set), &set) && CPU_COUNT(&set) < 2;
+#endif
 }
 static void *create(const float *weights, size_t count, uint32_t flags) {
     if (flags & ~(uint32_t)DPDFNET_CREATE_SINGLE_THREAD) return NULL;

@@ -5,35 +5,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#if !defined(__linux__) || !defined(__x86_64__)
-#error Fixed pair contract requires Linux x86-64.
+#include "asm_abi.h"
+#include "pages.h"
+#ifndef __x86_64__
+#error Fixed pair contract requires x86-64.
 #endif
 
-void dpdf_qdot4pair64_avx2(const int8_t *,const int8_t *,const int8_t *,int32_t *);
+DPDF_SYSV void dpdf_qdot4pair64_avx2(const int8_t *,const int8_t *,const int8_t *,int32_t *);
 #ifdef DPDF_PAIR_TEST96
-void dpdf_qdot4pair96_avx2(const int8_t *,const int8_t *,const int8_t *,int32_t *);
+DPDF_SYSV void dpdf_qdot4pair96_avx2(const int8_t *,const int8_t *,const int8_t *,int32_t *);
 #endif
 #define CHECK(v) do { if (!(v)) { fprintf(stderr,"Pair contract line %d\n",__LINE__); return 1; } } while (0)
 typedef struct { unsigned char *mapping,*writable,*payload; size_t mapping_bytes,writable_bytes,bytes; } region;
 static uint32_t seed=UINT32_C(0xa721bd19);
 static uint32_t random_u32(void) { seed=seed*1664525u+1013904223u; return seed; }
 static int allocate(region *r,size_t bytes,int at_end,size_t gap) {
-    long page=sysconf(_SC_PAGESIZE); if (page<=0) return -1;
+    long page=page_size(); if (page<=0) return -1;
     size_t p=(size_t)page,pages=(bytes+gap+p-1)/p;
     r->mapping_bytes=(pages+2)*p;
-    r->mapping=mmap(NULL,r->mapping_bytes,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
-    if (r->mapping==MAP_FAILED) return -1;
+    r->mapping=map_none(r->mapping_bytes);
+    if (r->mapping==NULL) return -1;
     r->writable=r->mapping+p; r->writable_bytes=pages*p; r->bytes=bytes;
     r->payload=at_end?r->writable+r->writable_bytes-bytes-gap:r->writable+gap;
-    if (mprotect(r->writable,r->writable_bytes,PROT_READ|PROT_WRITE)) {
-        munmap(r->mapping,r->mapping_bytes); return -1;
+    if (protect_rw(r->writable,r->writable_bytes)) {
+        unmap(r->mapping,r->mapping_bytes); return -1;
     }
     return 0;
 }
 static int fill(region *r,const void *payload) {
-    if (mprotect(r->writable,r->writable_bytes,PROT_READ|PROT_WRITE)) return -1;
+    if (protect_rw(r->writable,r->writable_bytes)) return -1;
     memset(r->writable,0xa5,r->writable_bytes);
     if (payload) memcpy(r->payload,payload,r->bytes); else memset(r->payload,0xcd,r->bytes);
     return 0;
@@ -101,9 +101,9 @@ int main(void) {
             for (int pattern=0;pattern<patterns_per_placement;++pattern) {
                 patterns(activation,weights,k,pattern); oracle(activation,weights,k,packed,expected);
                 CHECK(fill(&a,activation)==0 && fill(&w0,packed[0])==0 && fill(&w1,packed[1])==0 && fill(&out,NULL)==0);
-                CHECK(mprotect(a.writable,a.writable_bytes,PROT_READ)==0);
-                CHECK(mprotect(w0.writable,w0.writable_bytes,PROT_READ)==0);
-                CHECK(mprotect(w1.writable,w1.writable_bytes,PROT_READ)==0);
+                CHECK(protect_ro(a.writable,a.writable_bytes)==0);
+                CHECK(protect_ro(w0.writable,w0.writable_bytes)==0);
+                CHECK(protect_ro(w1.writable,w1.writable_bytes)==0);
                 if (k==64) dpdf_qdot4pair64_avx2((const int8_t *)a.payload,(const int8_t *)w0.payload,
                                                (const int8_t *)w1.payload,(int32_t *)out.payload);
 #ifdef DPDF_PAIR_TEST96
@@ -116,8 +116,8 @@ int main(void) {
                 CHECK(canaries(&a) && canaries(&w0) && canaries(&w1) && canaries(&out));
                 ++calls;
             }
-            CHECK(munmap(a.mapping,a.mapping_bytes)==0 && munmap(w0.mapping,w0.mapping_bytes)==0);
-            CHECK(munmap(w1.mapping,w1.mapping_bytes)==0 && munmap(out.mapping,out.mapping_bytes)==0);
+            CHECK(unmap(a.mapping,a.mapping_bytes)==0 && unmap(w0.mapping,w0.mapping_bytes)==0);
+            CHECK(unmap(w1.mapping,w1.mapping_bytes)==0 && unmap(out.mapping,out.mapping_bytes)==0);
         }
     }
     printf("{\"passed\":true,\"calls_checked\":%d,\"widths_checked\":%zu,\"patterns_per_placement\":%d,"

@@ -1,18 +1,22 @@
 #define _GNU_SOURCE
 #include "worker.h"
 #include <immintrin.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <x86intrin.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <linux/futex.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
-#include <stdatomic.h>
-#include <stdint.h>
-#include <stdlib.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
-#include <x86intrin.h>
+#endif
 
 /* Spin budget in TSC ticks (about 1 ms at typical clocks). Within a hop,
  * waits are shorter: sleeping there would add a kernel wake-up, which costs
@@ -59,26 +63,68 @@ struct dpdf_worker {
     uint64_t ran,usual[4]; /* Helper task run time; typical run time of each
                             * of a hop's tasks, in posting order (TSC). */
     int loss,joins,stolen,hopped,score,paused,pause,since; /* Caller-side back-off. */
+#ifdef _WIN32
+    HANDLE thread;
+    /* Auto-reset events stand in for futexes on task and wake: a signal
+     * stays set until a wait consumes it, so one sent before the wait is not
+     * lost, and every waiter rechecks its condition after waking. */
+    HANDLE task_event,wake_event;
+    HANDLE timer; /* High-resolution: the default timer tick is 15.6 ms. */
+#else
     pthread_t thread;
     pid_t pid; /* The creating process; a forked child has no helper. */
+#endif
 };
 
+#ifdef _WIN32
+static int64_t now_ns(void) {
+    LARGE_INTEGER f,c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return c.QuadPart/f.QuadPart*1000000000+c.QuadPart%f.QuadPart*1000000000/f.QuadPart;
+}
+static HANDLE event_for(dpdf_worker *w,atomic_uint *word) {
+    return word==&w->task ? w->task_event : w->wake_event;
+}
+static void park(dpdf_worker *w,atomic_uint *word,unsigned value,int64_t timeout) {
+    if (atomic_load_explicit(word,memory_order_seq_cst)!=value) return;
+    if (timeout>0) {
+        /* Relative due time in 100 ns units, rounded up. */
+        LARGE_INTEGER due={.QuadPart=-((timeout+99)/100)};
+        if (SetWaitableTimer(w->timer,&due,0,NULL,NULL,FALSE)) {
+            HANDLE handles[2]={event_for(w,word),w->timer};
+            WaitForMultipleObjects(2,handles,FALSE,INFINITE);
+            return;
+        }
+    }
+    WaitForSingleObject(event_for(w,word),INFINITE);
+}
+static void unpark(dpdf_worker *w,atomic_uint *word) { SetEvent(event_for(w,word)); }
+static void yield(void) { SwitchToThread(); }
+/* Windows has no fork. */
+static int forked(const dpdf_worker *w) { (void)w; return 0; }
+#else
 static int64_t now_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC,&t);
     return (int64_t)t.tv_sec*1000000000+t.tv_nsec;
 }
-static void futex_wait(atomic_uint *word,unsigned value,int64_t timeout) {
+static void park(dpdf_worker *w,atomic_uint *word,unsigned value,int64_t timeout) {
+    (void)w;
     struct timespec t={(time_t)(timeout/1000000000),(long)(timeout%1000000000)};
     syscall(SYS_futex,(void *)word,FUTEX_WAIT_PRIVATE,value,timeout>0 ? &t : NULL,NULL,0);
 }
-static void futex_wake(atomic_uint *word) {
+static void unpark(dpdf_worker *w,atomic_uint *word) {
+    (void)w;
     syscall(SYS_futex,(void *)word,FUTEX_WAKE_PRIVATE,1,NULL,NULL,0);
 }
+static void yield(void) { sched_yield(); }
+static int forked(const dpdf_worker *w) { return getpid()!=w->pid; }
+#endif
 static void wake_helper(dpdf_worker *w) {
     if (atomic_load_explicit(&w->sleeping,memory_order_seq_cst)) {
         atomic_fetch_add_explicit(&w->wake,1,memory_order_seq_cst);
-        futex_wake(&w->wake);
+        unpark(w,&w->wake);
     }
 }
 /* Sleep until woken (timeout 0) or for timeout ns. Dekker with post and
@@ -90,13 +136,13 @@ static void helper_sleep(dpdf_worker *w,int64_t timeout,int expired) {
     if (atomic_load_explicit(&w->task,memory_order_seq_cst)!=POSTED &&
         !atomic_load_explicit(&w->quit,memory_order_seq_cst) &&
         (expired || !atomic_load_explicit(&w->active,memory_order_seq_cst)))
-        futex_wait(&w->wake,seq,timeout);
+        park(w,&w->wake,seq,timeout);
     atomic_store_explicit(&w->sleeping,0,memory_order_relaxed);
 }
 static void relax(uint64_t *mark) {
     _mm_pause();
     const uint64_t now=__rdtsc();
-    if (now-*mark>YIELD) { sched_yield(); *mark=now; }
+    if (now-*mark>YIELD) { yield(); *mark=now; }
 }
 static int waiting(dpdf_worker *w) {
     return atomic_load_explicit(&w->task,memory_order_acquire)!=POSTED &&
@@ -138,13 +184,14 @@ static void helper_idle(dpdf_worker *w,int64_t *late,int64_t *spread) {
     }
 }
 
-static void *helper(void *p) {
-    dpdf_worker *w=p;
+static void helper(dpdf_worker *w) {
     int64_t late=50000,spread=0;
+#ifndef _WIN32
     prctl(PR_SET_TIMERSLACK,1000UL,0,0,0); /* Pre-wake timers fire on time. */
+#endif
     for (;;) {
         helper_idle(w,&late,&spread);
-        if (atomic_load_explicit(&w->quit,memory_order_relaxed)) return NULL;
+        if (atomic_load_explicit(&w->quit,memory_order_relaxed)) return;
         unsigned expected=POSTED;
         if (!atomic_compare_exchange_strong_explicit(&w->task,&expected,RUNNING,
                 memory_order_acquire,memory_order_relaxed)) continue; /* The caller took it. */
@@ -156,21 +203,42 @@ static void *helper(void *p) {
         w->flags=_mm_getcsr()&0x3fu;
         _mm_setcsr(own);
         atomic_store_explicit(&w->task,DONE,memory_order_seq_cst);
-        if (atomic_load_explicit(&w->caller_waiting,memory_order_seq_cst)) futex_wake(&w->task);
+        if (atomic_load_explicit(&w->caller_waiting,memory_order_seq_cst)) unpark(w,&w->task);
     }
 }
 
-dpdf_worker *dpdf_worker_create(void) {
-    dpdf_worker *w=aligned_alloc(64,(sizeof(*w)+63)/64*64);
-    if (!w) return NULL;
-    atomic_init(&w->task,IDLE); atomic_init(&w->caller_waiting,0); atomic_init(&w->wake,0);
-    atomic_init(&w->active,0); atomic_init(&w->sleeping,0); atomic_init(&w->quit,0);
-    atomic_init(&w->next,0); atomic_init(&w->jitter2,0);
-    w->fn=NULL; w->arg=NULL; w->csr=0; w->flags=0; w->status=0;
-    w->last=0; w->period=0; w->jitter=0; w->outliers=0;
-    w->ran=0; for (int i=0;i<4;++i) w->usual[i]=0;
-    w->loss=0; w->joins=0; w->stolen=0; w->hopped=0; w->score=0; w->paused=0;
-    w->pause=MIN_PAUSE; w->since=0;
+#ifdef _WIN32
+static DWORD WINAPI helper_main(LPVOID p) { helper(p); return 0; }
+static void release(dpdf_worker *w) {
+    if (w->timer) CloseHandle(w->timer);
+    if (w->wake_event) CloseHandle(w->wake_event);
+    if (w->task_event) CloseHandle(w->task_event);
+    _aligned_free(w);
+}
+/* Kernels keep scratch on the stack (the API asks callers for 1 MiB), so the
+ * helper reserves 2 MiB. Windows does not inherit a thread's priority, so the
+ * helper copies the creating thread's, as default attributes do on Linux. */
+static int start(dpdf_worker *w) {
+    w->task_event=CreateEventW(NULL,FALSE,FALSE,NULL);
+    w->wake_event=CreateEventW(NULL,FALSE,FALSE,NULL);
+    w->timer=CreateWaitableTimerExW(NULL,NULL,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_ALL_ACCESS);
+    if (!w->task_event || !w->wake_event || !w->timer) return -1;
+    w->thread=CreateThread(NULL,(SIZE_T)2<<20,helper_main,w,
+                           STACK_SIZE_PARAM_IS_A_RESERVATION|CREATE_SUSPENDED,NULL);
+    if (!w->thread) return -1;
+    SetThreadPriority(w->thread,GetThreadPriority(GetCurrentThread()));
+    SetThreadDescription(w->thread,L"dpdfnet-lane");
+    ResumeThread(w->thread);
+    return 0;
+}
+static void stop(dpdf_worker *w) {
+    WaitForSingleObject(w->thread,INFINITE);
+    CloseHandle(w->thread);
+}
+#else
+static void *helper_main(void *p) { helper(p); return NULL; }
+static void release(dpdf_worker *w) { free(w); }
+static int start(dpdf_worker *w) {
     /* The helper inherits a fully blocked signal mask, so process signals
      * keep going to the application's own threads. */
     sigset_t all,old;
@@ -180,33 +248,57 @@ dpdf_worker *dpdf_worker_create(void) {
      * is inherited from the creating thread, as with default attributes. */
     pthread_attr_t attr;
     size_t stack=0;
-    if (pthread_attr_init(&attr)) { free(w); return NULL; }
+    if (pthread_attr_init(&attr)) return -1;
     if (pthread_attr_getstacksize(&attr,&stack) || stack<(size_t)2<<20) pthread_attr_setstacksize(&attr,(size_t)2<<20);
     pthread_sigmask(SIG_SETMASK,&all,&old);
-    const int failed=pthread_create(&w->thread,&attr,helper,w);
+    const int failed=pthread_create(&w->thread,&attr,helper_main,w);
     pthread_sigmask(SIG_SETMASK,&old,NULL);
     pthread_attr_destroy(&attr);
-    if (failed) { free(w); return NULL; }
+    if (failed) return -1;
     w->pid=getpid();
     pthread_setname_np(w->thread,"dpdfnet-lane");
+    return 0;
+}
+static void stop(dpdf_worker *w) { pthread_join(w->thread,NULL); }
+#endif
+
+dpdf_worker *dpdf_worker_create(void) {
+    const size_t bytes=(sizeof(dpdf_worker)+63)/64*64;
+#ifdef _WIN32
+    dpdf_worker *w=_aligned_malloc(bytes,64);
+    if (!w) return NULL;
+    w->thread=NULL; w->task_event=NULL; w->wake_event=NULL; w->timer=NULL;
+#else
+    dpdf_worker *w=aligned_alloc(64,bytes);
+    if (!w) return NULL;
+#endif
+    atomic_init(&w->task,IDLE); atomic_init(&w->caller_waiting,0); atomic_init(&w->wake,0);
+    atomic_init(&w->active,0); atomic_init(&w->sleeping,0); atomic_init(&w->quit,0);
+    atomic_init(&w->next,0); atomic_init(&w->jitter2,0);
+    w->fn=NULL; w->arg=NULL; w->csr=0; w->flags=0; w->status=0;
+    w->last=0; w->period=0; w->jitter=0; w->outliers=0;
+    w->ran=0; for (int i=0;i<4;++i) w->usual[i]=0;
+    w->loss=0; w->joins=0; w->stolen=0; w->hopped=0; w->score=0; w->paused=0;
+    w->pause=MIN_PAUSE; w->since=0;
+    if (start(w)) { release(w); return NULL; }
     return w;
 }
 
 void dpdf_worker_destroy(dpdf_worker *w) {
     if (!w) return;
     /* After fork the child has no helper to stop; its stack is leaked. */
-    if (getpid()!=w->pid) { free(w); return; }
+    if (forked(w)) { release(w); return; }
     atomic_store_explicit(&w->quit,1,memory_order_seq_cst);
     atomic_fetch_add_explicit(&w->wake,1,memory_order_seq_cst);
-    futex_wake(&w->wake);
-    pthread_join(w->thread,NULL);
-    free(w);
+    unpark(w,&w->wake);
+    stop(w);
+    release(w);
 }
 
 size_t dpdf_worker_bytes(void) { return (sizeof(dpdf_worker)+63)/64*64; }
 
 int dpdf_worker_begin(dpdf_worker *w) {
-    if (getpid()!=w->pid) return 0; /* A forked child runs hops alone. */
+    if (forked(w)) return 0; /* A forked child runs hops alone. */
     const int64_t now=now_ns();
     if (w->last) {
         const int64_t interval=now-w->last,error=interval-w->period;
@@ -267,7 +359,7 @@ int dpdf_worker_join(dpdf_worker *w) {
     while (atomic_load_explicit(&w->task,memory_order_acquire)!=DONE) {
         if (__rdtsc()-start<SPIN) { relax(&mark); continue; }
         atomic_store_explicit(&w->caller_waiting,1,memory_order_seq_cst);
-        if (atomic_load_explicit(&w->task,memory_order_seq_cst)!=DONE) futex_wait(&w->task,RUNNING,0);
+        if (atomic_load_explicit(&w->task,memory_order_seq_cst)!=DONE) park(w,&w->task,RUNNING,0);
         atomic_store_explicit(&w->caller_waiting,0,memory_order_relaxed);
     }
     const uint64_t waited=__rdtsc()-start;

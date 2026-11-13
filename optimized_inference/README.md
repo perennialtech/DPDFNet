@@ -10,9 +10,9 @@ fallback in the same binary. Both models use the final W7A8 implementation:
 quantized matrix weights and
 activations, FP32 recurrent state, and fitted GRU gate functions.
 
-The supported target is **Linux x86-64 with AVX2/FMA and GCC**. Windows users can
-build and run it through WSL2. Native Windows, ARM and macOS builds are not
-provided by this package. Inference needs no ONNX Runtime, Python, BLAS or GPU.
+The supported targets are **Linux and Windows on x86-64 with AVX2/FMA**, built
+with GCC (MinGW-w64 GCC from MSYS2 on Windows). ARM and macOS builds are not
+provided. Inference needs no ONNX Runtime, Python, BLAS or GPU.
 
 ## Build
 
@@ -22,7 +22,7 @@ From this folder, with GCC, CMake 3.18+ and Python 3.8+ installed:
 python3 tools/build.py
 ```
 
-This builds `build/libdpdfnet.so`, trains a fresh compiler profile for model 8,
+This builds `build/libdpdfnet.so` (`build/libdpdfnet.dll` on Windows), trains a fresh compiler profile for model 8,
 and runs the contract tests. Python's standard library is sufficient for this
 build driver; Python is not a runtime dependency. See [build instructions](docs/BUILD.md)
 for direct CMake commands, static linking, installation and sanitizers.

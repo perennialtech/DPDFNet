@@ -1,12 +1,14 @@
-/* Research-only Linux x86-64 SysV, AVX2/FMA, fixed K=256.
+/* Research-only x86-64 SysV, AVX2/FMA, fixed K=256.
  * Eight independent output vectors per tile; native N768 dispatch uses12 tiles.
  * Weight grid [-63,63], unsigned activation grid [0,254]. */
 .intel_syntax noprefix
 .text
 .p2align 5
 .globl dpdf_qaffine256_fused_avx2
+#ifdef __ELF__
 .hidden dpdf_qaffine256_fused_avx2
 .type dpdf_qaffine256_fused_avx2,@function
+#endif
 dpdf_qaffine256_fused_avx2:
     .cfi_startproc
     vbroadcastss ymm15, xmm0
@@ -117,5 +119,7 @@ dpdf_qaffine256_fused_avx2:
     vzeroupper
     ret
     .cfi_endproc
+#ifdef __ELF__
 .size dpdf_qaffine256_fused_avx2,.-dpdf_qaffine256_fused_avx2
 .section .note.GNU-stack,"",@progbits
+#endif

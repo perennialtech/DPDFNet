@@ -2,7 +2,9 @@
 #define DPDFNET_H
 #include <stddef.h>
 #include <stdint.h>
-#if defined(__GNUC__)
+#if defined(_WIN32) && defined(DPDFNET_BUILD_DLL)
+#define DPDFNET_API __declspec(dllexport)
+#elif defined(__GNUC__) && !defined(_WIN32)
 #define DPDFNET_API __attribute__((visibility("default")))
 #else
 #define DPDFNET_API

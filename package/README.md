@@ -207,7 +207,7 @@ import dpdfnet
 enhancer = dpdfnet.StreamEnhancer(
     model="dpdfnet2_48khz_hr",
     backend="native",
-    native_library="optimized_inference/build/libdpdfnet.so",
+    native_library="optimized_inference/build/libdpdfnet.so",  # libdpdfnet.dll on Windows
     native_weights="optimized_inference/models/dpdfnet2_48khz_hr/weights.f32",
 )
 ```

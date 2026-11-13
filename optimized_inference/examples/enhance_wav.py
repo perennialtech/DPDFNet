@@ -1,5 +1,6 @@
 """48 kHz mono WAV example with causal FFT and delay-aligned output."""
 import argparse
+import os
 from pathlib import Path
 import numpy as np
 import soundfile as sf
@@ -42,7 +43,8 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--model", type=int, choices=(2, 8), default=8)
-    parser.add_argument("--library", type=Path, default=root / "build/libdpdfnet.so")
+    library = "libdpdfnet.dll" if os.name == "nt" else "libdpdfnet.so"
+    parser.add_argument("--library", type=Path, default=root / "build" / library)
     args = parser.parse_args()
     audio, rate = sf.read(args.input, dtype="float32", always_2d=True)
     if rate != 48000 or audio.shape[1] != 1 or not np.isfinite(audio).all():

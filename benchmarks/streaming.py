@@ -9,10 +9,38 @@ import json
 import os
 from pathlib import Path
 import platform
-import resource
 import time
 
 import numpy as np
+
+
+def peak_rss_mib() -> float:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                (name, ctypes.c_size_t) for name in (
+                    "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                    "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                    "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")
+            ]
+
+        counters = Counters(cb=ctypes.sizeof(Counters))
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.K32GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        if not kernel32.K32GetProcessMemoryInfo(
+            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+        ):
+            raise ctypes.WinError()
+        return counters.PeakWorkingSetSize / 1024**2
+    import resource
+
+    scale = 1024**2 if platform.system() == "Darwin" else 1024
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / scale
 
 
 def main() -> None:
@@ -129,7 +157,6 @@ def main() -> None:
         packages["onnxruntime"] = version("onnxruntime")
     if args.backend == "openvino":
         packages["openvino"] = version("openvino")
-    rss_scale = 1024**2 if platform.system() == "Darwin" else 1024
     report = {
         "model": args.model,
         "model_sha256": hashlib.sha256(
@@ -175,8 +202,7 @@ def main() -> None:
         "scheduler_lateness_p99_ms": float(
             np.percentile(lateness[args.warmup_frames :], 99)
         ),
-        "peak_process_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        / rss_scale,
+        "peak_process_rss_mib": peak_rss_mib(),
     }
     text = json.dumps(report, indent=2)
     print(text)

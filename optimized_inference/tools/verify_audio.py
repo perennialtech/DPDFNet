@@ -8,6 +8,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -86,7 +87,8 @@ def verify_concurrency(library, size):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data", type=Path, required=True)
-    p.add_argument("--library", type=Path, default=ROOT / "build/libdpdfnet.so")
+    library = "libdpdfnet.dll" if os.name == "nt" else "libdpdfnet.so"
+    p.add_argument("--library", type=Path, default=ROOT / "build" / library)
     p.add_argument("--workers", type=int, default=1)
     p.add_argument("--output", type=Path, default=ROOT / "validation/local/audio.json")
     args = p.parse_args()
