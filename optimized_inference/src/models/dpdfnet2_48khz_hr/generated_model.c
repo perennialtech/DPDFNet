@@ -381,11 +381,11 @@ memcpy((m->arena+1760)+(0),(m->arena+976)+(0),481*sizeof(float));
 /* 39: Reshape /model/enc/erb_conv0_buffer/Reshape */
 /* 40: Slice /model/enc/erb_conv0_buffer/Slice_1 */
 /* 41: Concat /model/enc/erb_conv0_buffer/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+3440)+b*1443+0,((state_in+577)+481)+b*962,962*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+3440)+b*1443+962,(m->arena+1760)+b*481,481*sizeof(float));
+memmove(state_out+577,(state_in+577)+481,962*sizeof(float));
+memcpy(state_out+1539,(m->arena+1760),481*sizeof(float));
 /* 42: Slice /model/enc/erb_conv0_buffer/Slice_2 */
 /* 43: Transpose /model/enc/erb_conv0_buffer/Transpose_1 */
-for (int t2=0;t2<3;++t2) memcpy((m->arena+4896)+(t2*481),((m->arena+3440)+0)+(t2*481),481*sizeof(float));
+for (int t2=0;t2<3;++t2) memcpy((m->arena+4896)+(t2*481),((state_out+577)+0)+(t2*481),481*sizeof(float));
 /* 44: Reshape /model/enc/erb_conv0_buffer/Reshape_1 */
 /* 45: Slice /model/enc/Slice */
 for (int i=0;i<1440;++i) (m->arena+6352)[i]=(m->arena+4896)[(0+0*1)*1443+(0+0*1)*1443+(0+((i/480)%3)*1)*481+(0+((i/1)%480)*1)*1];
@@ -419,21 +419,21 @@ dpdf_transpose_avx2((m->arena+17696),(m->arena+76912),40,64);
 for (int i=0;i<2560;++i) (m->arena+74352)[i]=((m->arena+76912)[i]>0?(m->arena+76912)[i]:0.0f);
 /* 57: Slice /model/enc/dprnn_erb/blocks.0/inter_gru/Slice */
 /* 58: DpdfDprnn /model/enc/dprnn_erb/blocks.0/Native */
-if (dpdf_process_layout(m->blocks[0],(m->arena+74352),(state_in+2020),(m->arena+76912),(m->arena+15136),2)) return -1;
+if (dpdf_process_layout(m->blocks[0],(m->arena+74352),(state_in+2020),(m->arena+76912),state_out+2020,2)) return -1;
 /* 59: Slice /model/enc/dprnn_erb/blocks.1/inter_gru/Slice */
 /* 60: DpdfDprnn /model/enc/dprnn_erb/blocks.1/Native */
-if (dpdf_process_layout(m->blocks[1],(m->arena+76912),(state_in+4580),(m->arena+17696),(m->arena+20256),1)) return -1;
+if (dpdf_process_layout(m->blocks[1],(m->arena+76912),(state_in+4580),(m->arena+17696),state_out+4580,1)) return -1;
 /* 61: Transpose /model/enc/df_conv0_buffer/Transpose */
 for (int t2=0;t2<2;++t2) for (int t3=0;t3<96;++t3) (m->arena+976)[t2*96+t3*1]=(m->arena+1568)[t2*1+t3*2];
 /* 62: Slice /model/enc/df_conv0_buffer/Slice */
 /* 63: Reshape /model/enc/df_conv0_buffer/Reshape */
 /* 64: Slice /model/enc/df_conv0_buffer/Slice_1 */
 /* 65: Concat /model/enc/df_conv0_buffer/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+1568)+b*576+0,((state_in+7140)+192)+b*384,384*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+1568)+b*576+384,(m->arena+976)+b*192,192*sizeof(float));
+memmove(state_out+7140,(state_in+7140)+192,384*sizeof(float));
+memcpy(state_out+7524,(m->arena+976),192*sizeof(float));
 /* 66: Slice /model/enc/df_conv0_buffer/Slice_2 */
 /* 67: Transpose /model/enc/df_conv0_buffer/Transpose_1 */
-for (int t1=0;t1<2;++t1) for (int t2=0;t2<3;++t2) memcpy((m->arena+2144)+(t1*288+t2*96),((m->arena+1568)+0)+(t1*96+t2*192),96*sizeof(float));
+for (int t1=0;t1<2;++t1) for (int t2=0;t2<3;++t2) memcpy((m->arena+2144)+(t1*288+t2*96),((state_out+7140)+0)+(t1*96+t2*192),96*sizeof(float));
 /* 68: Reshape /model/enc/df_conv0_buffer/Reshape_1 */
 /* 69: Slice /model/enc/df_conv0/df_conv0.1/Slice */
 /* 70: Slice /model/enc/df_conv0/df_conv0.1/Slice_1 */
@@ -460,10 +460,10 @@ dpdf_transpose_avx2((m->arena+76912),(m->arena+22816),48,64);
 for (int i=0;i<3072;++i) (m->arena+25888)[i]=((m->arena+22816)[i]>0?(m->arena+22816)[i]:0.0f);
 /* 79: Slice /model/enc/dprnn_df/blocks.0/inter_gru/Slice */
 /* 80: DpdfDprnn /model/enc/dprnn_df/blocks.0/Native */
-if (dpdf_process_layout(m->blocks[2],(m->arena+25888),(state_in+7716),(m->arena+22816),(m->arena+35104),2)) return -1;
+if (dpdf_process_layout(m->blocks[2],(m->arena+25888),(state_in+7716),(m->arena+22816),state_out+7716,2)) return -1;
 /* 81: Slice /model/enc/dprnn_df/blocks.1/inter_gru/Slice */
 /* 82: DpdfDprnn /model/enc/dprnn_df/blocks.1/Native */
-if (dpdf_process_layout(m->blocks[3],(m->arena+22816),(state_in+10788),(m->arena+25888),(m->arena+76912),1)) return -1;
+if (dpdf_process_layout(m->blocks[3],(m->arena+22816),(state_in+10788),(m->arena+25888),state_out+10788,1)) return -1;
 /* 83: Transpose /model/enc/Transpose */
 for (int t2=0;t2<48;++t2) for (int t3=0;t3<64;++t3) (m->arena+22816)[t2*64+t3*1]=(m->arena+25888)[t2*1+t3*48];
 /* 84: Flatten /model/enc/Flatten */
@@ -704,11 +704,11 @@ for (int t2=0;t2<64;++t2) memcpy((m->arena+22816)+(t2*96),(m->arena+28960)+(t2*9
 /* 278: Reshape /model/df_dec/df_convp_buffer/Reshape */
 /* 279: Slice /model/df_dec/df_convp_buffer/Slice_1 */
 /* 280: Concat /model/df_dec/df_convp_buffer/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+38432)+b*30720+0,((state_in+15140)+6144)+b*24576,24576*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+38432)+b*30720+24576,(m->arena+22816)+b*6144,6144*sizeof(float));
+memmove(state_out+15140,(state_in+15140)+6144,24576*sizeof(float));
+memcpy(state_out+39716,(m->arena+22816),6144*sizeof(float));
 /* 281: Slice /model/df_dec/df_convp_buffer/Slice_2 */
 /* 282: Transpose /model/df_dec/df_convp_buffer/Transpose_1 */
-for (int t1=0;t1<64;++t1) for (int t2=0;t2<5;++t2) memcpy((m->arena+79984)+(t1*480+t2*96),((m->arena+38432)+0)+(t1*96+t2*6144),96*sizeof(float));
+for (int t1=0;t1<64;++t1) for (int t2=0;t2<5;++t2) memcpy((m->arena+79984)+(t1*480+t2*96),((state_out+15140)+0)+(t1*96+t2*6144),96*sizeof(float));
 /* 283: Reshape /model/df_dec/df_convp_buffer/Reshape_1 */
 /* 284: Slice /model/df_dec/df_convp/df_convp.1/Slice */
 /* 285: Slice /model/df_dec/df_convp/df_convp.1/Slice_1 */
@@ -749,11 +749,11 @@ for (int t3=0;t3<481;++t3) memcpy((m->arena+69152)+(t3*2),(m->arena+0)+(t3*2),2*
 /* 306: Reshape /model/mask/spec_buffer/Reshape */
 /* 307: Slice /model/mask/spec_buffer/Slice_1 */
 /* 308: Concat /model/mask/spec_buffer/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+72032)+b*2886+0,((state_in+45860)+962)+b*1924,1924*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+72032)+b*2886+1924,(m->arena+69152)+b*962,962*sizeof(float));
+memmove(state_out+45860,(state_in+45860)+962,1924*sizeof(float));
+memcpy(state_out+47784,(m->arena+69152),962*sizeof(float));
 /* 309: Slice /model/mask/spec_buffer/Slice_2 */
 /* 310: Transpose /model/mask/spec_buffer/Transpose_1 */
-for (int t3=0;t3<481;++t3) memcpy((m->arena+0)+(t3*2),((m->arena+72032)+0)+(t3*2),2*sizeof(float));
+for (int t3=0;t3<481;++t3) memcpy((m->arena+0)+(t3*2),((state_out+45860)+0)+(t3*2),2*sizeof(float));
 /* 311: Reshape /model/mask/spec_buffer/Reshape_1 */
 /* 312: Mul /model/mask/Mul */
 for (int i=0;i<962;++i) (m->arena+69152)[i]=(m->arena+0)[i]*(m->arena+18656)[((i/2)%481)*1];
@@ -763,23 +763,23 @@ for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((m->arena+0)+(t2*192+t
 /* 315: Reshape /model/df_op/coefs_buffer/Reshape */
 /* 316: Slice /model/df_op/coefs_buffer/Slice_1 */
 /* 317: Concat /model/df_op/coefs_buffer/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+4896)+b*2880+0,((state_in+48746)+960)+b*1920,1920*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+4896)+b*2880+1920,(m->arena+0)+b*960,960*sizeof(float));
+memmove(state_out+48746,(state_in+48746)+960,1920*sizeof(float));
+memcpy(state_out+50666,(m->arena+0),960*sizeof(float));
 /* 318: Slice /model/df_op/coefs_buffer/Slice_2 */
 /* 319: Reshape /model/df_op/coefs_buffer/Reshape_1 */
 /* 320: Transpose /model/df_op/Transpose */
-for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((m->arena+0)+(t2*192+t3*2),((m->arena+4896)+0)+(t2*192+t3*2),2*sizeof(float));
+for (int t2=0;t2<5;++t2) for (int t3=0;t3<96;++t3) memcpy((m->arena+0)+(t2*192+t3*2),((state_out+48746)+0)+(t2*192+t3*2),2*sizeof(float));
 /* 321: Transpose /model/df_op/spec_buffer/Transpose */
 for (int t3=0;t3<481;++t3) memcpy((m->arena+17952)+(t3*2),(m->arena+69152)+(t3*2),2*sizeof(float));
 /* 322: Slice /model/df_op/spec_buffer/Slice */
 /* 323: Reshape /model/df_op/spec_buffer/Reshape */
 /* 324: Slice /model/df_op/spec_buffer/Slice_1 */
 /* 325: Concat /model/df_op/spec_buffer/Concat */
-for (int b=0;b<1;++b) memcpy((m->arena+7776)+b*4810+0,((state_in+51626)+962)+b*3848,3848*sizeof(float));
-for (int b=0;b<1;++b) memcpy((m->arena+7776)+b*4810+3848,(m->arena+17952)+b*962,962*sizeof(float));
+memmove(state_out+51626,(state_in+51626)+962,3848*sizeof(float));
+memcpy(state_out+55474,(m->arena+17952),962*sizeof(float));
 /* 326: Slice /model/df_op/spec_buffer/Slice_2 */
 /* 327: Transpose /model/df_op/spec_buffer/Transpose_1 */
-for (int t2=0;t2<5;++t2) for (int t3=0;t3<481;++t3) memcpy((m->arena+22816)+(t2*962+t3*2),((m->arena+7776)+0)+(t2*962+t3*2),2*sizeof(float));
+for (int t2=0;t2<5;++t2) for (int t3=0;t3<481;++t3) memcpy((m->arena+22816)+(t2*962+t3*2),((state_out+51626)+0)+(t2*962+t3*2),2*sizeof(float));
 /* 328: Reshape /model/df_op/spec_buffer/Reshape_1 */
 /* 329: Slice /model/df_op/Slice */
 for (int i=0;i<960;++i) (m->arena+17952)[i]=(m->arena+22816)[(0+0*1)*4810+(0+0*1)*4810+(0+((i/192)%5)*1)*962+(0+((i/2)%96)*1)*2+(0+((i/1)%2)*1)*1];
@@ -829,21 +829,11 @@ for (int i=0;i<962;++i) spec_out[i]=(m->arena+0)[i]*(m->weights+8)[0];
 /*  defer the complete state handoff until all inputs are consumed. */
 memcpy(state_out+0,(m->arena+2944),481*sizeof(float));
 memcpy(state_out+481,(m->arena+1472),96*sizeof(float));
-memcpy(state_out+577,(m->arena+3440),1443*sizeof(float));
-memcpy(state_out+2020,(m->arena+15136),2560*sizeof(float));
-memcpy(state_out+4580,(m->arena+20256),2560*sizeof(float));
-memcpy(state_out+7140,(m->arena+1568),576*sizeof(float));
-memcpy(state_out+7716,(m->arena+35104),3072*sizeof(float));
-memcpy(state_out+10788,(m->arena+76912),3072*sizeof(float));
 memcpy(state_out+13860,(m->arena+976),256*sizeof(float));
 memcpy(state_out+14116,(m->arena+38176),256*sizeof(float));
 memcpy(state_out+14372,(m->arena+20000),256*sizeof(float));
 memcpy(state_out+14628,(m->arena+17696),256*sizeof(float));
 memcpy(state_out+14884,(m->arena+19408),256*sizeof(float));
-memcpy(state_out+15140,(m->arena+38432),30720*sizeof(float));
-memcpy(state_out+45860,(m->arena+72032),2886*sizeof(float));
-memcpy(state_out+48746,(m->arena+4896),2880*sizeof(float));
-memcpy(state_out+51626,(m->arena+7776),4810*sizeof(float));
 
 return 0;
 }
