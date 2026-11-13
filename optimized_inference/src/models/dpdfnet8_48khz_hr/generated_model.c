@@ -612,9 +612,8 @@ for (int t1=0;t1<64;++t1) for (int t3=0;t3<40;++t3) (m->arena+76912)[t1*40+t3*1]
 /* 214: Conv /model/erb_dec/conv3p/conv3p.0/Conv */
 dpdf_convop_run(m->conv[7],(m->arena+74352),(m->arena+101488));
 /* 215: Relu /model/erb_dec/conv3p/conv3p.2/Relu */
-for (int i=0;i<2560;++i) (m->arena+74352)[i]=((m->arena+101488)[i]>0?(m->arena+101488)[i]:0.0f);
 /* 216: Add /model/erb_dec/Add */
-for (int i=0;i<2560;++i) (m->arena+101488)[i]=(m->arena+74352)[i]+(m->arena+76912)[i];
+for (int i=0;i<2560;++i) { float v=((m->arena+101488)[i]>0?(m->arena+101488)[i]:0.0f); (m->arena+101488)[i]=v+(m->arena+76912)[i]; }
 /* 217: Conv /model/erb_dec/convt3/convt3.0/convs.0/Conv */
 dpdf_convop_run(m->conv[8],(m->arena+101488),(m->arena+74352));
 /* 218: Conv /model/erb_dec/convt3/convt3.0/convs.1/Conv */
@@ -625,9 +624,8 @@ if (dpdf_dense_cm_run(m->dense[171],(const float *const[]){(m->arena+74352),(m->
 /* 225: Conv /model/erb_dec/conv2p/conv2p.0/Conv */
 dpdf_convop_run(m->conv[10],(m->arena+69232),(m->arena+116336));
 /* 226: Relu /model/erb_dec/conv2p/conv2p.2/Relu */
-for (int i=0;i<5120;++i) (m->arena+69232)[i]=((m->arena+116336)[i]>0?(m->arena+116336)[i]:0.0f);
 /* 227: Add /model/erb_dec/Add_1 */
-for (int i=0;i<5120;++i) (m->arena+116336)[i]=(m->arena+69232)[i]+(m->arena+74352)[i];
+for (int i=0;i<5120;++i) { float v=((m->arena+116336)[i]>0?(m->arena+116336)[i]:0.0f); (m->arena+116336)[i]=v+(m->arena+74352)[i]; }
 /* 228: Conv /model/erb_dec/convt2/convt2.0/convs.0/Conv */
 dpdf_convop_run(m->conv[11],(m->arena+116336),(m->arena+121456));
 /* 229: Conv /model/erb_dec/convt2/convt2.0/convs.1/Conv */
@@ -638,9 +636,8 @@ if (dpdf_dense_cm_run(m->dense[172],(const float *const[]){(m->arena+121456),(m-
 /* 236: Conv /model/erb_dec/conv1p/conv1p.0/Conv */
 dpdf_convop_run(m->conv[13],(m->arena+4896),(m->arena+69232));
 /* 237: Relu /model/erb_dec/conv1p/conv1p.2/Relu */
-for (int i=0;i<10240;++i) (m->arena+4896)[i]=((m->arena+69232)[i]>0?(m->arena+69232)[i]:0.0f);
 /* 238: Add /model/erb_dec/Add_2 */
-for (int i=0;i<10240;++i) (m->arena+69232)[i]=(m->arena+4896)[i]+(m->arena+116336)[i];
+for (int i=0;i<10240;++i) { float v=((m->arena+69232)[i]>0?(m->arena+69232)[i]:0.0f); (m->arena+69232)[i]=v+(m->arena+116336)[i]; }
 /* 239: Conv /model/erb_dec/convt1/convt1.0/convs.0/Conv */
 dpdf_convop_run(m->conv[14],(m->arena+69232),(m->arena+4896));
 /* 240: Conv /model/erb_dec/convt1/convt1.0/convs.1/Conv */
@@ -653,9 +650,8 @@ if (dpdf_dense_cm_run(m->dense[173],(const float *const[]){(m->arena+4896),(m->a
 /* 248: Conv /model/erb_dec/conv0p/conv0p.0/Conv */
 dpdf_convop_run(m->conv[17],(m->arena+38512),(m->arena+147056));
 /* 249: Relu /model/erb_dec/conv0p/conv0p.2/Relu */
-for (int i=0;i<30720;++i) (m->arena+38432)[i]=((m->arena+147056)[i]>0?(m->arena+147056)[i]:0.0f);
 /* 250: Add /model/erb_dec/Add_3 */
-for (int i=0;i<30720;++i) (m->arena+147056)[i]=(m->arena+38432)[i]+(m->arena+116336)[i];
+for (int i=0;i<30720;++i) { float v=((m->arena+147056)[i]>0?(m->arena+147056)[i]:0.0f); (m->arena+147056)[i]=v+(m->arena+116336)[i]; }
 /* 251: Conv /model/erb_dec/conv0_out/conv0_out.0/Conv */
 dpdf_convop_run(m->conv[18],(m->arena+147056),(m->arena+17696));
 /* 252: Sigmoid /model/erb_dec/conv0_out/conv0_out.2/Sigmoid */
