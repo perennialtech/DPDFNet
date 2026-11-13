@@ -119,12 +119,15 @@ void dpdf_axpy_avx2(float *y, const float *x, float a, int n) {
  * axpy uses FMA for full eight-element groups and separate multiply/add in
  * its tails. Their intersection is safe for vector FMA; fringe outputs retain
  * that per-tap distinction, including skipped padding. */
-int dpdf_conv_row_avx2(const float *x,const float *w,const float *bias,float *y,
-        int ci,int hi,int wi,int co,int ho,int wo,int kh,int kw,
-        int sh,int sw,int ph,int pw,int group) {
+static inline __attribute__((always_inline)) int conv_row(const float *x,const float *w,
+        const float *bias,float *y,int ci,int hi,int wi,int co,int ho,int wo,int kh,int kw,
+        int sh,int sw,int ph,int pw,int group,const int fixed_cig,const int fixed_kh,const int fixed_kw) {
     if (ho!=1 || hi!=kh || sh!=1 || sw!=1 || ph!=0 || wi<8) return 0;
-    /* Fringe setup dominates the shortest padded depthwise reductions. */
-    if (ci==group && kh==1 && kw>1 && pw>0 && wo<64) return 0;
+    if (fixed_kh) kh=fixed_kh;
+    if (fixed_kw) kw=fixed_kw;
+    /* In the general loop, fringe setup dominates the shortest padded
+     * depthwise reductions; the fixed shapes are cheaper than the fallback. */
+    if (!fixed_kw && ci==group && kh==1 && kw>1 && pw>0 && wo<64) return 0;
     int first=0,limit=wo;
     for (int kx=0;kx<kw;++kx) {
         int begin=pw-kx; if (begin<0) begin=0;
@@ -137,7 +140,7 @@ int dpdf_conv_row_avx2(const float *x,const float *w,const float *bias,float *y,
     first=(first+7)/8*8;
     int last=limit/8*8;
     if (last-first<8) return 0;
-    int cig=ci/group,cog=co/group;
+    int cig=fixed_cig?fixed_cig:ci/group,cog=co/group;
     for (int oc=0;oc<co;++oc) {
         const float *input=x+(oc/cog)*cig*hi*wi;
         const float *weight=w+oc*cig*kh*kw;
@@ -196,6 +199,20 @@ int dpdf_conv_row_avx2(const float *x,const float *w,const float *bias,float *y,
         }
     }
     return 1;
+}
+/* The graph's tap shapes as compile-time constants: the general loop's
+ * per-block setup otherwise dominates depthwise and single-input layers. */
+int dpdf_conv_row_avx2(const float *x,const float *w,const float *bias,float *y,
+        int ci,int hi,int wi,int co,int ho,int wo,int kh,int kw,
+        int sh,int sw,int ph,int pw,int group) {
+#define DPDF_CONV_ROW(c,h,k) conv_row(x,w,bias,y,ci,hi,wi,co,ho,wo,kh,kw,sh,sw,ph,pw,group,c,h,k)
+    const int cig=group>0 && ci%group==0 ? ci/group : 0;
+    if (cig==1 && kh==3 && kw==3) return DPDF_CONV_ROW(1,3,3);
+    if (cig==1 && kh==1 && kw==3) return DPDF_CONV_ROW(1,1,3);
+    if (cig==1 && kh==1 && kw==1) return DPDF_CONV_ROW(1,1,1);
+    if (cig==64 && kh==1 && kw==3) return DPDF_CONV_ROW(64,1,3);
+    return DPDF_CONV_ROW(0,0,0);
+#undef DPDF_CONV_ROW
 }
 
 
