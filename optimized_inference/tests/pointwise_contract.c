@@ -1,9 +1,10 @@
 /* Channel-major pointwise projection against the row-major W7A8 path.
- * The reference gathers positions into rows, runs the existing affine path,
- * transposes back and applies the graph's x>0?x:0. Covers every piece count
- * and width the graphs use, edge widths, special values (including NaN
- * groups that take the exact row-order range), in-place output, both ISA
- * implementations and every rounding mode with and without FTZ/DAZ. */
+ * The reference gathers each position into a row, runs the single-row
+ * affine path, transposes back and applies the graph's x>0?x:0. Covers
+ * every piece count and width the graphs use, edge widths, special values
+ * (including NaN groups that take the exact row-order range), in-place
+ * output, both ISA implementations and every rounding mode with and
+ * without FTZ/DAZ. */
 #include "int8_matrix.h"
 #include "extended_ops.h"
 #include <fenv.h>
@@ -35,20 +36,19 @@ static float value(int pattern,int j,int k,int t) {
     }
 }
 
+/* One row at a time: M=1 takes the scalar per-row quantization parameters,
+ * not the eight-row batch derivation the channel-major kernel shares. */
 static void reference(const dpdf_qmatrix *q,const float *pieces,int count,int width,
                       const float *bias,float *y,int relu) {
     const int positions=count*width;
-    float rows[48*64],out[48*64];
-    for (int start=0;start<positions;start+=48) {
-        int m=positions-start; if (m>48) m=48;
-        for (int r=0;r<m;++r) {
-            int p=start+r,t=p/count,j=p%count;
-            for (int k=0;k<64;++k) rows[r*64+k]=pieces[j*64*width+k*width+t];
-        }
-        dpdf_qaffine_avx2(q,rows,bias,out,m);
-        for (int r=0;r<m;++r) for (int n=0;n<64;++n) {
-            float v=out[r*64+n];
-            y[n*positions+start+r]=relu ? (v>0?v:0.0f) : v;
+    float row[64],out[64];
+    for (int p=0;p<positions;++p) {
+        const int t=p/count,j=p%count;
+        for (int k=0;k<64;++k) row[k]=pieces[j*64*width+k*width+t];
+        dpdf_qaffine_avx2(q,row,bias,out,1);
+        for (int n=0;n<64;++n) {
+            float v=out[n];
+            y[n*positions+p]=relu ? (v>0?v:0.0f) : v;
         }
     }
 }
