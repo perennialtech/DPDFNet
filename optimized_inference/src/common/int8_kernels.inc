@@ -571,7 +571,8 @@ static inline __attribute__((always_inline)) __m256i cm_bytes(const float *x,int
 /* Integer sums for four outputs (n0..n0+3) over DPDF_CM_VECTORS position
  * vectors. Inline assembly: GCC spills a 16-register intrinsic version on
  * every iteration. Operands are the accumulators; addresses and the K walk
- * are those of the intrinsic tail below. */
+ * are those of the intrinsic tail below. The "memory" clobber orders the
+ * asm after the activation stores it reads through pointer registers. */
 static inline __attribute__((always_inline)) void cm_dot(const uint8_t *act,int stride,
         const int8_t *w,__m256i sum[4][DPDF_CM_VECTORS]) {
 #ifdef DPDF_INT8_VNNI
@@ -617,7 +618,7 @@ static inline __attribute__((always_inline)) void cm_dot(const uint8_t *act,int 
         "jne 1b"
         : [s00]"=&x"(s00), [s01]"=&x"(s01), [s02]"=&x"(s02), [s10]"=&x"(s10), [s11]"=&x"(s11), [s12]"=&x"(s12), [s20]"=&x"(s20), [s21]"=&x"(s21), [s22]"=&x"(s22), [s30]"=&x"(s30), [s31]"=&x"(s31), [s32]"=&x"(s32), [a0]"=&x"(a0), [a1]"=&x"(a1), [a2]"=&x"(a2), [b]"=&x"(b), [act]"+r"(act), [w]"+r"(w)
         : [stride]"r"((size_t)stride), [end]"r"(end)
-        : "cc");
+        : "cc", "memory");
     sum[0][0]=s00;
     sum[0][1]=s01;
     sum[0][2]=s02;
@@ -681,7 +682,7 @@ static inline __attribute__((always_inline)) void cm_dot(const uint8_t *act,int 
         "jne 1b"
         : [s00]"=&x"(s00), [s01]"=&x"(s01), [s10]"=&x"(s10), [s11]"=&x"(s11), [s20]"=&x"(s20), [s21]"=&x"(s21), [s30]"=&x"(s30), [s31]"=&x"(s31), [a0]"=&x"(a0), [a1]"=&x"(a1), [b]"=&x"(b), [t]"=&x"(t), [act]"+r"(act), [w]"+r"(w)
         : [stride]"r"((size_t)stride), [end]"r"(end), [ones]"x"(ones)
-        : "cc");
+        : "cc", "memory");
     sum[0][0]=s00;
     sum[0][1]=s01;
     sum[1][0]=s10;
