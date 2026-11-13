@@ -39,7 +39,6 @@
 #define dpdf_model_weights_sha256 dpdfnet2_private_model_weights_sha256
 #define dpdf_native_model dpdfnet2_private_native_model
 #define dpdf_norm_residual_avx2 dpdfnet2_private_norm_residual_avx2
-#define dpdf_norm_residual_four_avx2 dpdfnet2_private_norm_residual_four_avx2
 #define dpdf_pair_fused_args dpdfnet2_private_pair_fused_args
 #define dpdf_process_layout dpdfnet2_private_process_layout
 #define dpdf_qaffine dpdfnet2_private_qaffine

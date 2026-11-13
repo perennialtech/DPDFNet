@@ -2,124 +2,60 @@
 #include <immintrin.h>
 #include <math.h>
 
-/* Four independent rows occupy four double lanes. Every lane retains the
+/* Each group of four rows occupies four double lanes. Every lane retains the
  * scalar channel order and double precision; no horizontal reassociation or
- * FMA is used. DPRNN frequency counts (40/48) are divisible by four. */
-static void dpdf_norm_residual_four_avx2(float *out,const float *p,const float *skip,
-        const float *scale,const float *bias,float eps,int rows) {
-    for (int r=0;r<rows;r+=4) {
-        __m256d mean=_mm256_setzero_pd(),var=mean;
-        const float *x=p+r*64;
-        for (int c=0;c<64;c+=4) {
-            __m128 v0=_mm_loadu_ps(x+c),v1=_mm_loadu_ps(x+64+c);
-            __m128 v2=_mm_loadu_ps(x+128+c),v3=_mm_loadu_ps(x+192+c);
-            _MM_TRANSPOSE4_PS(v0,v1,v2,v3);
-            /* Add channels in their original increasing order in each lane. */
-            mean=_mm256_add_pd(mean,_mm256_cvtps_pd(v0));
-            mean=_mm256_add_pd(mean,_mm256_cvtps_pd(v1));
-            mean=_mm256_add_pd(mean,_mm256_cvtps_pd(v2));
-            mean=_mm256_add_pd(mean,_mm256_cvtps_pd(v3));
-        }
-        mean=_mm256_mul_pd(mean,_mm256_set1_pd(1.0/64));
-        for (int c=0;c<64;c+=4) {
-            __m128 v0=_mm_loadu_ps(x+c),v1=_mm_loadu_ps(x+64+c);
-            __m128 v2=_mm_loadu_ps(x+128+c),v3=_mm_loadu_ps(x+192+c);
-            _MM_TRANSPOSE4_PS(v0,v1,v2,v3);
-            __m256d d=_mm256_sub_pd(_mm256_cvtps_pd(v0),mean);
-            var=_mm256_add_pd(var,_mm256_mul_pd(d,d));
-            d=_mm256_sub_pd(_mm256_cvtps_pd(v1),mean);
-            var=_mm256_add_pd(var,_mm256_mul_pd(d,d));
-            d=_mm256_sub_pd(_mm256_cvtps_pd(v2),mean);
-            var=_mm256_add_pd(var,_mm256_mul_pd(d,d));
-            d=_mm256_sub_pd(_mm256_cvtps_pd(v3),mean);
-            var=_mm256_add_pd(var,_mm256_mul_pd(d,d));
-        }
+ * FMA is used. Transposing and widening occupy the shuffle port, so the
+ * mean pass keeps its exactly widened values for the variance pass. Up to
+ * four groups (sixteen rows) advance together. DPRNN frequency counts (40/48)
+ * are divisible by four. */
+static inline __attribute__((always_inline)) void norm_rows(float *out,const float *p,
+        const float *skip,const float *scale,const float *bias,float eps,int r,const int groups) {
+    __m256d mean[4],var[4],wide[64*4];
+    for (int g=0;g<groups;++g) mean[g]=var[g]=_mm256_setzero_pd();
+    const float *x=p+r*64;
+    for (int c=0;c<64;c+=4) for (int g=0;g<groups;++g) {
+        const float *row=x+g*256+c;
+        __m128 v0=_mm_loadu_ps(row),v1=_mm_loadu_ps(row+64);
+        __m128 v2=_mm_loadu_ps(row+128),v3=_mm_loadu_ps(row+192);
+        _MM_TRANSPOSE4_PS(v0,v1,v2,v3);
+        __m256d *w=wide+c*groups+g;
+        w[0]=_mm256_cvtps_pd(v0); w[groups]=_mm256_cvtps_pd(v1);
+        w[2*groups]=_mm256_cvtps_pd(v2); w[3*groups]=_mm256_cvtps_pd(v3);
+        /* Add channels in their original increasing order in each lane. */
+        mean[g]=_mm256_add_pd(mean[g],w[0]);
+        mean[g]=_mm256_add_pd(mean[g],w[groups]);
+        mean[g]=_mm256_add_pd(mean[g],w[2*groups]);
+        mean[g]=_mm256_add_pd(mean[g],w[3*groups]);
+    }
+    for (int g=0;g<groups;++g) mean[g]=_mm256_mul_pd(mean[g],_mm256_set1_pd(1.0/64));
+    for (int c=0;c<64;++c) for (int g=0;g<groups;++g) {
+        __m256d d=_mm256_sub_pd(wide[c*groups+g],mean[g]);
+        var[g]=_mm256_add_pd(var[g],_mm256_mul_pd(d,d));
+    }
+    float means[16],invs[16];
+    for (int g=0;g<groups;++g) {
         __m256d inv=_mm256_div_pd(_mm256_set1_pd(1),_mm256_sqrt_pd(
-            _mm256_add_pd(_mm256_mul_pd(var,_mm256_set1_pd(1.0/64)),_mm256_set1_pd(eps))));
-        float means[4],invs[4];
-        _mm_storeu_ps(means,_mm256_cvtpd_ps(mean)); _mm_storeu_ps(invs,_mm256_cvtpd_ps(inv));
-        for (int t=0;t<4;++t) for (int c=0;c<64;c+=8) {
-            int offset=(r+t)*64+c;
-            __m256 value=_mm256_sub_ps(_mm256_loadu_ps(p+offset),_mm256_set1_ps(means[t]));
-            value=_mm256_mul_ps(value,_mm256_set1_ps(invs[t]));
-            value=_mm256_mul_ps(value,_mm256_loadu_ps(scale+c));
-            value=_mm256_add_ps(value,_mm256_loadu_ps(bias+c));
-            value=_mm256_add_ps(value,_mm256_loadu_ps(skip+offset));
-            _mm256_storeu_ps(out+offset,value);
-        }
+            _mm256_add_pd(_mm256_mul_pd(var[g],_mm256_set1_pd(1.0/64)),_mm256_set1_pd(eps))));
+        _mm_storeu_ps(means+4*g,_mm256_cvtpd_ps(mean[g]));
+        _mm_storeu_ps(invs+4*g,_mm256_cvtpd_ps(inv));
+    }
+    for (int t=0;t<4*groups;++t) for (int c=0;c<64;c+=8) {
+        int offset=(r+t)*64+c;
+        __m256 value=_mm256_sub_ps(_mm256_loadu_ps(p+offset),_mm256_set1_ps(means[t]));
+        value=_mm256_mul_ps(value,_mm256_set1_ps(invs[t]));
+        value=_mm256_mul_ps(value,_mm256_loadu_ps(scale+c));
+        value=_mm256_add_ps(value,_mm256_loadu_ps(bias+c));
+        value=_mm256_add_ps(value,_mm256_loadu_ps(skip+offset));
+        _mm256_storeu_ps(out+offset,value);
     }
 }
 
 void dpdf_norm_residual_avx2(float *out,const float *p,const float *skip,
         const float *scale,const float *bias,float eps,int rows) {
     int r=0;
-    for (;r+7<rows;r+=8) {
-        __m256d mean0=_mm256_setzero_pd(),mean1=mean0;
-        __m256d var0=mean0,var1=mean0;
-        const float *x=p+r*64;
-        for (int c=0;c<64;c+=4) {
-            __m128 v0=_mm_loadu_ps(x+c),v1=_mm_loadu_ps(x+64+c);
-            __m128 v2=_mm_loadu_ps(x+128+c),v3=_mm_loadu_ps(x+192+c);
-            __m128 w0=_mm_loadu_ps(x+256+c),w1=_mm_loadu_ps(x+320+c);
-            __m128 w2=_mm_loadu_ps(x+384+c),w3=_mm_loadu_ps(x+448+c);
-            _MM_TRANSPOSE4_PS(v0,v1,v2,v3);
-            _MM_TRANSPOSE4_PS(w0,w1,w2,w3);
-            mean0=_mm256_add_pd(mean0,_mm256_cvtps_pd(v0));
-            mean1=_mm256_add_pd(mean1,_mm256_cvtps_pd(w0));
-            mean0=_mm256_add_pd(mean0,_mm256_cvtps_pd(v1));
-            mean1=_mm256_add_pd(mean1,_mm256_cvtps_pd(w1));
-            mean0=_mm256_add_pd(mean0,_mm256_cvtps_pd(v2));
-            mean1=_mm256_add_pd(mean1,_mm256_cvtps_pd(w2));
-            mean0=_mm256_add_pd(mean0,_mm256_cvtps_pd(v3));
-            mean1=_mm256_add_pd(mean1,_mm256_cvtps_pd(w3));
-        }
-        mean0=_mm256_mul_pd(mean0,_mm256_set1_pd(1.0/64));
-        mean1=_mm256_mul_pd(mean1,_mm256_set1_pd(1.0/64));
-        for (int c=0;c<64;c+=4) {
-            __m128 v0=_mm_loadu_ps(x+c),v1=_mm_loadu_ps(x+64+c);
-            __m128 v2=_mm_loadu_ps(x+128+c),v3=_mm_loadu_ps(x+192+c);
-            __m128 w0=_mm_loadu_ps(x+256+c),w1=_mm_loadu_ps(x+320+c);
-            __m128 w2=_mm_loadu_ps(x+384+c),w3=_mm_loadu_ps(x+448+c);
-            _MM_TRANSPOSE4_PS(v0,v1,v2,v3);
-            _MM_TRANSPOSE4_PS(w0,w1,w2,w3);
-            __m256d d0=_mm256_sub_pd(_mm256_cvtps_pd(v0),mean0);
-            __m256d e0=_mm256_sub_pd(_mm256_cvtps_pd(w0),mean1);
-            var0=_mm256_add_pd(var0,_mm256_mul_pd(d0,d0));
-            var1=_mm256_add_pd(var1,_mm256_mul_pd(e0,e0));
-            __m256d d1=_mm256_sub_pd(_mm256_cvtps_pd(v1),mean0);
-            __m256d e1=_mm256_sub_pd(_mm256_cvtps_pd(w1),mean1);
-            var0=_mm256_add_pd(var0,_mm256_mul_pd(d1,d1));
-            var1=_mm256_add_pd(var1,_mm256_mul_pd(e1,e1));
-            __m256d d2=_mm256_sub_pd(_mm256_cvtps_pd(v2),mean0);
-            __m256d e2=_mm256_sub_pd(_mm256_cvtps_pd(w2),mean1);
-            var0=_mm256_add_pd(var0,_mm256_mul_pd(d2,d2));
-            var1=_mm256_add_pd(var1,_mm256_mul_pd(e2,e2));
-            __m256d d3=_mm256_sub_pd(_mm256_cvtps_pd(v3),mean0);
-            __m256d e3=_mm256_sub_pd(_mm256_cvtps_pd(w3),mean1);
-            var0=_mm256_add_pd(var0,_mm256_mul_pd(d3,d3));
-            var1=_mm256_add_pd(var1,_mm256_mul_pd(e3,e3));
-        }
-        __m256d inv0=_mm256_div_pd(_mm256_set1_pd(1),_mm256_sqrt_pd(
-            _mm256_add_pd(_mm256_mul_pd(var0,_mm256_set1_pd(1.0/64)),_mm256_set1_pd(eps))));
-        __m256d inv1=_mm256_div_pd(_mm256_set1_pd(1),_mm256_sqrt_pd(
-            _mm256_add_pd(_mm256_mul_pd(var1,_mm256_set1_pd(1.0/64)),_mm256_set1_pd(eps))));
-        float means[8],invs[8];
-        _mm_storeu_ps(means,_mm256_cvtpd_ps(mean0));
-        _mm_storeu_ps(means+4,_mm256_cvtpd_ps(mean1));
-        _mm_storeu_ps(invs,_mm256_cvtpd_ps(inv0));
-        _mm_storeu_ps(invs+4,_mm256_cvtpd_ps(inv1));
-        for (int t=0;t<8;++t) for (int c=0;c<64;c+=8) {
-            int offset=(r+t)*64+c;
-            __m256 value=_mm256_sub_ps(_mm256_loadu_ps(p+offset),_mm256_set1_ps(means[t]));
-            value=_mm256_mul_ps(value,_mm256_set1_ps(invs[t]));
-            value=_mm256_mul_ps(value,_mm256_loadu_ps(scale+c));
-            value=_mm256_add_ps(value,_mm256_loadu_ps(bias+c));
-            value=_mm256_add_ps(value,_mm256_loadu_ps(skip+offset));
-            _mm256_storeu_ps(out+offset,value);
-        }
-    }
-    if (r<rows) dpdf_norm_residual_four_avx2(out+r*64,p+r*64,skip+r*64,
-                                          scale,bias,eps,rows-r);
+    for (;r+15<rows;r+=16) norm_rows(out,p,skip,scale,bias,eps,r,4);
+    for (;r+7<rows;r+=8) norm_rows(out,p,skip,scale,bias,eps,r,2);
+    for (;r+3<rows;r+=4) norm_rows(out,p,skip,scale,bias,eps,r,1);
 }
 
 /* Exact 8x8 transpose: the CNN layout conversions move bits only. With relu
