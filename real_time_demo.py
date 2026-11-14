@@ -1,25 +1,22 @@
 import argparse
-from importlib.metadata import version
 import queue
 import time
-from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
 import sounddevice as sd
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from dpdfnet import StreamEnhancer
-from dpdfnet.models import supported_models
+from dpdfnet.models import find_native_library, supported_models
 
 # =======================
 # CONFIG (GLOBAL STYLE)
 # =======================
-ONNX_DIR = Path("./model_zoo/onnx")
 MODEL_NAME = "dpdfnet8_48khz_hr"
 
 BUFFER_SECONDS = 5.0
 PLAYBACK_MIX = 0.0
-ONNX_MS_EMA_ALPHA = 0.02
+FRAME_MS_EMA_ALPHA = 0.02
 
 
 def align_signal_length(x: np.ndarray, target_len: int) -> np.ndarray:
@@ -37,44 +34,16 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Real-time CPU speech enhancement")
     parser.add_argument("--model", choices=supported_models(), default=MODEL_NAME)
     parser.add_argument(
-        "--backend", choices=["onnx", "openvino", "native"], default="onnx"
-    )
-    parser.add_argument("--onnx-dir", type=Path, default=ONNX_DIR)
-    parser.add_argument("--native-library", type=Path)
-    parser.add_argument("--native-weights", type=Path)
-    parser.add_argument(
-        "--native-single-thread",
+        "--single-thread",
         action="store_true",
-        help="Run native inference on the calling thread only",
+        help="Run inference on the audio thread only, without the helper thread",
     )
     args = parser.parse_args(argv)
     # Must be set before creating ImageItem/plots so spectrogram arrays
     # shaped [freq, time] map to y=freq and x=time.
     pg.setConfigOptions(antialias=True, imageAxisOrder="row-major")
 
-    native = args.backend == "native"
-    if native and (not args.native_library or not args.native_weights):
-        parser.error("native needs --native-library and --native-weights")
-    if not native and (
-        args.native_library or args.native_weights or args.native_single_thread
-    ):
-        parser.error("native options require --backend native")
-    onnx_path = (
-        None
-        if native
-        else (args.onnx_dir / f"{args.model}.onnx").expanduser().resolve()
-    )
-    if onnx_path is not None and not onnx_path.is_file():
-        raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
-
-    enhancer = StreamEnhancer(
-        model=args.model,
-        onnx_path=onnx_path,
-        backend=args.backend,
-        native_library=args.native_library,
-        native_weights=args.native_weights,
-        native_single_thread=args.native_single_thread,
-    )
+    enhancer = StreamEnhancer(args.model, single_thread=args.single_thread)
     sample_rate, hop_size = enhancer.sample_rate, enhancer.hop_size
     buffer_seconds = float(BUFFER_SECONDS)
     playback_mix = float(np.clip(PLAYBACK_MIX, 0.0, 1.0))
@@ -103,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     agc_release_sec = 0.30
     agc_gain = 1.0
 
-    onnx_ms_ema = float("nan")
+    frame_ms_ema = float("nan")
 
     def buffer_to_mag(buf: np.ndarray) -> np.ndarray:
         frame = buf.astype(np.float32, copy=True) * spec_window
@@ -129,16 +98,16 @@ def main(argv: list[str] | None = None) -> None:
         return np.clip(x * agc_gain, -1.0, 1.0)
 
     def enhance_frame(noisy_frame: np.ndarray) -> np.ndarray:
-        nonlocal onnx_ms_ema
+        nonlocal frame_ms_ema
         t0 = time.perf_counter()
         enhanced = enhancer.process(noisy_frame)
         frame_ms = (time.perf_counter() - t0) * 1000.0
-        if np.isnan(onnx_ms_ema):
-            onnx_ms_ema = frame_ms
+        if np.isnan(frame_ms_ema):
+            frame_ms_ema = frame_ms
         else:
-            onnx_ms_ema = (
-                1.0 - ONNX_MS_EMA_ALPHA
-            ) * onnx_ms_ema + ONNX_MS_EMA_ALPHA * frame_ms
+            frame_ms_ema = (
+                1.0 - FRAME_MS_EMA_ALPHA
+            ) * frame_ms_ema + FRAME_MS_EMA_ALPHA * frame_ms
         return enhanced
 
     def update_mix_label() -> None:
@@ -275,7 +244,7 @@ def main(argv: list[str] | None = None) -> None:
             pass
 
     def update_plot():
-        nonlocal spec_noisy, spec_enh, db_spec_noisy, db_spec_enh, onnx_ms_ema
+        nonlocal spec_noisy, spec_enh, db_spec_noisy, db_spec_enh, frame_ms_ema
         nonlocal spec_td_noisy, spec_td_enh
         updated = False
         try:
@@ -305,14 +274,14 @@ def main(argv: list[str] | None = None) -> None:
             img_enh.setImage(db_spec_enh, autoLevels=False)
             img_noisy.setLevels((db_min, db_max))
             img_enh.setLevels((db_min, db_max))
-        if np.isnan(onnx_ms_ema):
+        if np.isnan(frame_ms_ema):
             perf_value_label.setText("-- ms/frame")
         else:
-            perf_value_label.setText(f"{onnx_ms_ema:.3f} ms/frame")
+            perf_value_label.setText(f"{frame_ms_ema:.3f} ms/frame")
 
-    runtime_package = "onnxruntime" if args.backend == "onnx" else "openvino"
-    print(f"[INFO] CPU backend: {args.backend} {version(runtime_package)}")
-    print(f"[INFO] ONNX model: {onnx_path}")
+    threads = "single-threaded" if args.single_thread else "two threads"
+    print(f"[INFO] Native runtime ({threads}): {find_native_library()}")
+    print(f"[INFO] Model: {args.model}")
     print(f"[INFO] Audio params: sr={sample_rate}, hop={hop_size}")
     print("Streaming... speak into the mic. Close the window to stop.")
 

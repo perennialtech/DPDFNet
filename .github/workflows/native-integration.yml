@@ -54,7 +54,7 @@ jobs:
         if: matrix.pgo
         run: |
           python3 -m pip install -e '../package[test]'
-          DPDFNET_NATIVE_BUILD=build/ci python3 -m pytest -q ../package/tests/test_native_streaming.py
+          DPDFNET_NATIVE_LIBRARY=build/ci/libdpdfnet.so python3 -m pytest -q ../package/tests
       - name: Configure static or sanitizer build
         if: '!matrix.pgo'
         run: cmake -S . -B build/ci ${{ matrix.config }} -DDPDF_PGO_MODE=OFF -DBUILD_TESTING=ON
@@ -97,5 +97,5 @@ jobs:
         run: |
           if (-not (Test-Path build/ci/libdpdfnet.dll)) { throw 'build/ci/libdpdfnet.dll is missing' }
           python -m pip install -e '../package[test]'
-          $env:DPDFNET_NATIVE_BUILD = 'build/ci'
-          python -m pytest -q ../package/tests/test_native_streaming.py
+          $env:DPDFNET_NATIVE_LIBRARY = "$PWD/build/ci/libdpdfnet.dll"
+          python -m pytest -q ../package/tests

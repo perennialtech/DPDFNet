@@ -11,4 +11,3 @@ tqdm==4.67.1
 sounddevice>=0.4.6
 pyqtgraph>=0.13.3
 PyQt5>=5.15
-tensorflow>=2.12

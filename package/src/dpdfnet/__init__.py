@@ -4,17 +4,16 @@ __all__ = [
     "enhance",
     "enhance_file",
     "available_models",
-    "download",
     "StreamEnhancer",
 ]
 
 if TYPE_CHECKING:
-    from .api import available_models, download, enhance, enhance_file
+    from .api import available_models, enhance, enhance_file
     from .stream import StreamEnhancer
 
 
 def __getattr__(name: str):
-    if name in {"enhance", "enhance_file", "available_models", "download"}:
+    if name in {"enhance", "enhance_file", "available_models"}:
         from . import api
 
         return getattr(api, name)

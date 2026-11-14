@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Real-time speech enhancement for recordings, live streams, and edge devices.</strong><br>
-  Pretrained 8, 16, and 48 kHz models for the CLI, Python API, and stateful streaming.
+  Pretrained 8, 16, and 48 kHz models, and a native CPU runtime for the 48 kHz models with a CLI, Python API, and stateful streaming.
 </p>
 
 <p align="center">
@@ -55,51 +55,57 @@
 | dpdfnet2_48khz_hr | 2.58 | 2.42 | 11.6 | 10.0 |
 | dpdfnet8_48khz_hr | 3.63 | 7.17 | 18.7 | 14.2 |
 
-### Optimized native inference
+### Inference in this repository
 
-The [optimized C runtime](optimized_inference/README.md) supports
-`dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` with the final W7A8 kernels and
-FP32 recurrent state. It includes both model weights, a shared C API,
-assembly kernels, examples, contract tests and build documentation.
-
-The supported targets are Linux and Windows on x86-64 with AVX2/FMA, built with
-GCC (MinGW-w64 GCC from MSYS2 on Windows).
-Inference uses the calling thread plus one helper thread, which cuts
-per-hop latency by 25–45% at identical output (a single-threaded mode is
-available), and requires no ONNX Runtime.
+The `dpdfnet` package runs `dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` on the
+[optimized C runtime](optimized_inference/README.md): W7A8 integer kernels with
+FP32 recurrent state, hand-written AVX2/FMA (and AVX-VNNI) assembly, and the
+calling thread plus one helper thread, which cuts per-hop latency by 25–45% at
+identical output. On the tested CPUs a hop takes 5–7× less time than the
+original FP32 ONNX model under ONNX Runtime, which the package no longer uses.
 See [performance and output quality](optimized_inference/docs/PERFORMANCE.md)
 for measurements and their scope; the 50 ms algorithmic delay is unchanged.
 
-The native library is also available as an opt-in `StreamEnhancer` backend,
-sharing the Python streaming audio frontend; see
-[native streaming usage](package/README.md#real-time-microphone-enhancement).
+It runs on Linux and Windows 10 1607+ on x86-64 CPUs with AVX2 and FMA. The 8
+and 16 kHz models above are not part of the package: their PyTorch
+checkpoints and ONNX/TFLite exports stay on
+[Hugging Face](https://huggingface.co/Ceva-IP/DPDFNet) for research use, and
+`dpdfnet` 0.x on PyPI is the last release that ran them.
 
-## Install the PyPI Package
+## Install the Package
 
-For CPU-only ONNX inference using the packaged CLI and Python API:
+Wheels for Linux (glibc 2.27+) and Windows x86-64 bundle the library and
+both models' weights, so nothing is downloaded at run time. The repository's
+`Package` workflow builds and tests them. Once 1.0 is on PyPI, install it with
+`pip install "dpdfnet>=1"`; without the `>=1`, unsupported platforms silently
+get the 0.x ONNX release, whose API differs. To build a wheel from a checkout, with
+GCC 12+ and CMake 3.18+ (MSYS2 UCRT64 GCC on Windows, see
+[BUILD.md](optimized_inference/docs/BUILD.md)):
 
 ```bash
-pip install dpdfnet
+pip install ./package
 ```
+
+This compiles the profile-guided release build and runs all of the native
+runtime's contract tests before packaging, which takes a few minutes.
 
 ### CLI Example
 
 ```bash
-# Enhance one file
-dpdfnet enhance noisy.wav enhanced.wav --model dpdfnet4 --attn-limit-db 12
+# Enhance one file (default model: dpdfnet2_48khz_hr)
+dpdfnet enhance noisy.wav enhanced.wav --model dpdfnet8_48khz_hr --attn-limit-db 12
 
 # Enhance a directory (uses all CPU cores by default)
-dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --model dpdfnet2 --attn-limit-db 12
+dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --attn-limit-db 12
 
 # Enhance a directory with a fixed worker count
-dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --model dpdfnet2 --workers 4 --attn-limit-db 12
+dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --workers 4 --attn-limit-db 12
 
-# Download models
-dpdfnet download
-dpdfnet download dpdfnet8
-dpdfnet download dpdfnet2_8khz
-dpdfnet download dpdfnet4 --force
+# List the models and where the native library was found
+dpdfnet models
 ```
+
+Input at any sample rate is resampled to 48 kHz for the model and back.
 
 ### Python API Example
 
@@ -109,26 +115,21 @@ import dpdfnet
 
 # In-memory enhancement:
 audio, sr = sf.read("noisy.wav")
-enhanced = dpdfnet.enhance(audio, sample_rate=sr, model="dpdfnet4", attn_limit_db=12)
+enhanced = dpdfnet.enhance(audio, sample_rate=sr, model="dpdfnet8_48khz_hr", attn_limit_db=12)
 sf.write("enhanced.wav", enhanced, sr)
 
 # Enhance one file:
-out_path = dpdfnet.enhance_file("noisy.wav", model="dpdfnet2", attn_limit_db=12)
+out_path = dpdfnet.enhance_file("noisy.wav", attn_limit_db=12)
 print(out_path)
 
 # Model listing:
 for row in dpdfnet.available_models():
-    print(row["name"], row["ready"], row["cached"])
-
-# Download models:
-dpdfnet.download()				# All models
-dpdfnet.download("dpdfnet4")	# Specific model
-dpdfnet.download("dpdfnet2_8khz")
+    print(row["name"], row["ready"])
 ```
 
 ### Streaming (Real-Time) API
 
-For `dpdfnet8_48khz_hr`, use native 48 kHz audio and 480-sample (10 ms) chunks:
+Use 48 kHz audio and 480-sample (10 ms) chunks:
 
 ```python
 import dpdfnet
@@ -139,81 +140,53 @@ enhancer = dpdfnet.StreamEnhancer(model="dpdfnet8_48khz_hr")
 # enhanced = enhancer.process(input_block, sample_rate=enhancer.sample_rate)
 ```
 
-The optional float32 OpenVINO CPU backend lowers processing latency on the
-tested Intel CPU, using more memory. Install `dpdfnet[openvino]` and pass
-`backend="openvino"` to select it. The portable default remains ONNX Runtime.
-Neither backend changes model weights, skips frames, or removes lookahead.
+Pass `single_thread=True` to run each hop on the calling thread only, for
+example when running many streams in parallel. Output is identical either way.
 
 See the [microphone example and streaming API guidance](package/README.md#real-time-microphone-enhancement)
-for callback buffering, sample rates, and reset/flush behavior, and the
-[CPU benchmark report](docs/cpu-streaming-performance.md) for measured tradeoffs.
+for callback buffering, sample rates, and reset/flush behavior.
 
 ## Run From Source
 
-### 1) Install dependencies
+### 1) Build the native runtime and install the package for development
 
 ```bash
+python optimized_inference/tools/build.py   # PGO build and contract tests
 python -m venv .venv
 source .venv/bin/activate
+pip install -e './package[test]'
+python -m pytest package/tests
+```
+
+An editable install finds the library in `optimized_inference/build`. Set
+`DPDFNET_NATIVE_LIBRARY` to use a library built elsewhere.
+
+### 2) Research, training and ONNX export
+
+`requirements.txt` holds the PyTorch environment for the model code in
+`model/` and the ONNX exporters in `onnx_model/`:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2) Download models
-
-Model files are not bundled in this repository.\
-Download PyTorch checkpoints, TFLite, and ONNX models from Hugging Face:
+Model files are not bundled in this repository. Download PyTorch
+checkpoints from Hugging Face:
 
 ```bash
 pip install -U "huggingface_hub[cli]"
-
-# create target dirs
-mkdir -p model_zoo/{checkpoints,onnx,tflite}
+mkdir -p model_zoo/checkpoints
 
 # PyTorch checkpoints (HF path: checkpoints/* -> local: model_zoo/checkpoints/*)
 hf download Ceva-IP/DPDFNet \
   --include "checkpoints/*.pth" \
-  --local-dir model_zoo \
-
-# ONNX models (HF path: onnx/* -> local: model_zoo/onnx/*)
-hf download Ceva-IP/DPDFNet \
-  --include "onnx/*.onnx" \
-  --local-dir model_zoo \
-
-# TFLite models (HF path: *.tflite at repo root -> local: model_zoo/tflite/*)
-hf download Ceva-IP/DPDFNet \
-  --include "*.tflite" \
-  --local-dir model_zoo/tflite \
-```
-
-### 3) Run offline enhancement
-
-Put one or more `*.wav` files in `./noisy_wavs`, then choose one:
-
-#### Option A: `TFLite`
-
-```bash
-python -m tflite_model.infer_dpdfnet_tflite \
-	--noisy_dir ./noisy_wavs \
-	--enhanced_dir ./enhanced_wavs \
-	--model_name dpdfnet4 \
-	--workers 5 \
-	--attn-limit-db 12
-```
-
-#### Option B: `ONNX`
-
-```bash
-python -m onnx_model.infer_dpdfnet_onnx \
-  	--noisy_dir ./noisy_wavs \
-	--enhanced_dir ./enhanced_wavs \
-	--model_name dpdfnet4 \
-	--workers 5 \
-	--attn-limit-db 12
+  --local-dir model_zoo
 ```
 
 To export ONNX models from checkpoints, use the exporter that matches the sample-rate family.
 Set `--dprnn-num-blocks` to match the checkpoint variant; for 8 kHz and 48 kHz HR exports,
-this also determines the ONNX metadata profile:
+this also determines the ONNX metadata profile. Each exporter checks its
+output against PyTorch with ONNX Runtime:
 
 ```bash
 # 8 kHz
@@ -235,11 +208,10 @@ python -m onnx_model.export_dpdfnet_48khz_hr_to_onnx \
 	--dprnn-num-blocks 8
 ```
 
-Enhanced files are written as:
-
-```text
-<original_stem>_<model_name>.wav
-```
+The native weights in `optimized_inference/models` were fitted from the
+48 kHz HR ONNX exports and record each source file's SHA-256. The native
+graphs are maintained by hand, so a retrained checkpoint needs a new native
+port before the package can run it.
 
 ## Audio Samples & Demo
 
@@ -252,40 +224,33 @@ Enhanced files are written as:
 
 ![Real-time DPDFNet demo screenshot](figures/live_demo.png)
 
-Run:
+With the package installed as in [Run From Source](#run-from-source) and the
+demo's dependencies from `requirements.txt`:
 
 ```bash
-pip install -e ./package
 python -m real_time_demo --model dpdfnet8_48khz_hr
-
-# Optional faster CPU runtime:
-pip install -e './package[openvino]'
-python -m real_time_demo --model dpdfnet8_48khz_hr --backend openvino
 ```
 
 How it works:
-- Captures microphone audio in streaming hops.
-- Enhances each hop frame-by-frame with ONNX.
+- Captures microphone audio in 10 ms hops at 48 kHz.
+- Enhances each hop on the native runtime.
 - Displays live noisy vs enhanced spectrograms.
 - Allows you to control the noise‑reduction level during playback: `0` for the raw stream and `1` for the fully enhanced stream.
 - Enables the use of AGC during playback.
 
-Select another model with `--model`; use `--help` for options. The display's
-timing includes STFT, inference, and ISTFT. Plot FFTs run on the UI thread,
-not in the audio callback.
+Select the other model with `--model`, or run inference on the audio thread
+only with `--single-thread`; use `--help` for options. The display's timing
+includes STFT, inference, and ISTFT. Plot FFTs run on the UI thread, not in
+the audio callback.
 
 ## Troubleshooting / FAQ
 
-#### `Q: Model files are missing (TFLite / ONNX / checkpoints)`
-- Run the Hugging Face download commands from the `Run From Source` section.
-- Confirm files are in:
-  - `model_zoo/tflite/`
-  - `model_zoo/onnx/`
-  - `model_zoo/checkpoints/`
+#### `Q: "The native DPDFNet library was not found"`
+- Install a wheel, or in a source checkout run `python optimized_inference/tools/build.py`.
+- If you built the library elsewhere, point `DPDFNET_NATIVE_LIBRARY` at it.
 
-#### `Q: No .wav files found`
-- Both offline scripts scan only the exact folder given by `--noisy_dir` (non-recursive).
-- Ensure input files use `.wav` extension.
+#### `Q: "needs an x86-64 CPU with AVX2 and FMA"`
+- The runtime has no fallback for older x86 CPUs, ARM or macOS. Use `dpdfnet` 0.x (ONNX Runtime) there.
 
 #### `Q: Real-time demo has audio device errors`
 - Check microphone permissions and default input/output device settings.
@@ -295,14 +260,10 @@ not in the audio callback.
 - Ensure Qt dependencies from `requirements.txt` installed successfully.
 - On headless servers, run offline enhancement instead.
 
-#### `Q: I get import/module errors when running commands`
-- Run from repo root and use module form exactly as documented (`python -m ...`).
-- Activate your virtual environment before running commands.
-
 #### `Q: CPU is too slow for my target`
-- Use the model's native sample rate, one-hop callbacks, and construct `StreamEnhancer` before starting the device. Try its optional `openvino` backend; see the [CPU benchmark report](docs/cpu-streaming-performance.md).
-- Try smaller models (`baseline`, `dpdfnet2`).
-- Benchmark ONNX runtime using `python -m onnx_model.infer_dpdfnet_onnx ...` and compare RTF.
+- Use 48 kHz input, one-hop callbacks, and construct `StreamEnhancer` before starting the device.
+- Try `dpdfnet2_48khz_hr`, which takes about half the time per hop.
+- Measure with `python benchmarks/streaming.py --paced`; see [PERFORMANCE.md](optimized_inference/docs/PERFORMANCE.md).
 
 ## Evaluation Metrics
 

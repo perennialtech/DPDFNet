@@ -1,30 +1,32 @@
 [build-system]
 requires = [
-  "setuptools>=61",
-  "wheel",
+  "setuptools>=70.1",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dpdfnet"
-version = "0.6.0"
-description = "CPU-only ONNX inference package for DPDFNet speech enhancement."
+version = "1.0.0"
+description = "Native x86-64 CPU inference for DPDFNet 48 kHz speech enhancement."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
   { name = "Daniel Rika" }
 ]
-keywords = ["speech-enhancement", "audio", "onnx", "cpu", "dpdfnet"]
+keywords = ["speech-enhancement", "audio", "cpu", "avx2", "dpdfnet"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
-  "Operating System :: OS Independent",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Multimedia :: Sound/Audio",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -33,21 +35,15 @@ dependencies = [
   "numpy>=1.26",
   "librosa>=0.11",
   "soundfile>=0.13",
-  "onnxruntime>=1.20",
-  "filelock>=3.16",
   "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest>=7.4",
-  "onnx>=1.17",
 ]
 mp3 = [
   "pydub>=0.25",
-]
-openvino = [
-  "openvino>=2026.4.1,<2027",
 ]
 
 [project.scripts]

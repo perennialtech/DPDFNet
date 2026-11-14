@@ -8,6 +8,8 @@ __pycache__/
 *.onnx
 *.tflite
 *.npz
+# The package's ONNX reference fixture is small and must be tracked.
+!package/tests/data/*.npz
 *.pth
 *.pt
 *.ckpt
@@ -36,6 +38,7 @@ package/CONTRIBUTING.md
 *.cfg
 *.gz
 dpdfnet.egg-info/
+package/build/
 
 # Model Zoo
 model_zoo/

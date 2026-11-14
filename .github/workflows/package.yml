@@ -1,0 +1,99 @@
+name: Package
+on:
+  push:
+    paths: ['package/**', 'optimized_inference/**', '.github/workflows/package.yml']
+  pull_request:
+    paths: ['package/**', 'optimized_inference/**', '.github/workflows/package.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-wheel:
+    name: Linux wheel (manylinux_2_28, PGO)
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    timeout-minutes: 30
+    env:
+      PY: /opt/python/cp312-cp312/bin/python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: $PY -m pip install --quiet cmake build
+      - name: Build the PGO library and run its contracts
+        run: |
+          export PATH="$(dirname "$PY"):$PATH"
+          python optimized_inference/tools/build.py --build-dir "$PWD/native-build" --jobs 4
+      - name: Build and repair the wheel
+        run: |
+          DPDFNET_NATIVE_BUILD_DIR="$PWD/native-build" $PY -m build --wheel --outdir raw package
+          auditwheel repair --wheel-dir dist raw/*.whl
+          auditwheel show dist/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux
+          path: dist/*.whl
+          if-no-files-found: error
+  windows-wheel:
+    name: Windows wheel (MSYS2 UCRT64 GCC, PGO)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the PGO library and run its contracts
+        run: python3 optimized_inference/tools/build.py --build-dir native-build --jobs 4
+      - name: Build the wheel
+        shell: pwsh
+        run: |
+          python -m pip install --quiet build
+          $env:DPDFNET_NATIVE_BUILD_DIR = "$PWD/native-build"
+          python -m build --wheel --outdir dist package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-windows
+          path: dist/*.whl
+          if-no-files-found: error
+  test-wheel:
+    name: Installed wheel, ${{ matrix.os }}, Python ${{ matrix.python }}
+    needs: [linux-wheel, windows-wheel]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ runner.os == 'Windows' && 'wheel-windows' || 'wheel-linux' }}
+          path: dist
+      - name: Install the wheel
+        run: python -m pip install "$(ls dist/*.whl)[test]"
+      - name: Test the installed package
+        env:
+          DPDFNET_TEST_INSTALLED: '1'
+        run: |
+          python -m pytest -q package/tests
+          dpdfnet models
