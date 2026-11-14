@@ -62,7 +62,8 @@ The [optimized C runtime](optimized_inference/README.md) supports
 FP32 recurrent state. It includes both model weights, a shared C API,
 assembly kernels, examples, contract tests and build documentation.
 
-The supported target is Linux x86-64 with AVX2/FMA and GCC, including WSL2.
+The supported targets are Linux and Windows on x86-64 with AVX2/FMA, built with
+GCC (MinGW-w64 GCC from MSYS2 on Windows).
 Inference uses the calling thread plus one helper thread, which cuts
 per-hop latency by 25–45% at identical output (a single-threaded mode is
 available), and requires no ONNX Runtime.

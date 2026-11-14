@@ -3,12 +3,23 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import statistics
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+WINDOWS = os.name == "nt"
+
+
+def cpu_name():
+    if WINDOWS:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        return winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
+    return next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
+                 if line.startswith("model name")), "unknown")
 
 
 def summarize(runs):
@@ -43,7 +54,8 @@ def main():
     args = p.parse_args()
     if args.runs < 2 or not 100 <= args.hops <= 1000000:
         p.error("At least two runs and 100–1,000,000 hops are required")
-    executable = args.build_dir.resolve() / "dpdfnet_benchmark"
+    executable = args.build_dir.resolve() / ("dpdfnet_benchmark.exe" if WINDOWS else "dpdfnet_benchmark")
+    library = args.build_dir.resolve() / ("libdpdfnet.dll" if WINDOWS else "libdpdfnet.so")
     sizes = (2, 8) if args.model == "all" else (int(args.model),)
     records = {str(size): [] for size in sizes}
     for repeat in range(args.runs):
@@ -60,11 +72,9 @@ def main():
     report = {
         "schema_version": 1,
         "benchmark_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
-        "library_sha256": hashlib.sha256((args.build_dir.resolve() / "libdpdfnet.so").read_bytes()).hexdigest()
-        if (args.build_dir.resolve() / "libdpdfnet.so").is_file() else None,
+        "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest() if library.is_file() else None,
         "platform": platform.platform(),
-        "cpu": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
-                     if line.startswith("model name")), "unknown"),
+        "cpu": cpu_name(),
         "weights_sha256": {str(size): hashlib.sha256((ROOT / "models" /
                               ("dpdfnet%d_48khz_hr" % size) / "weights.f32").read_bytes()).hexdigest()
                            for size in sizes},

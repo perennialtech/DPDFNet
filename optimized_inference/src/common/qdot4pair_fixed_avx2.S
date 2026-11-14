@@ -1,12 +1,14 @@
-/* Research-only Linux x86-64 SysV, AVX2, unsigned A8 / signed W7.
+/* Research-only x86-64 SysV, AVX2, unsigned A8 / signed W7.
  * RDI four activation rows; RSI/RDX two packed eight-column weight tiles;
  * RCX output: tile0 rows0..3, then tile1 rows0..3. No stack or callee saves. */
 .intel_syntax noprefix
 .text
 .p2align 5
 .globl dpdf_qdot4pair64_avx2
+#ifdef __ELF__
 .hidden dpdf_qdot4pair64_avx2
 .type dpdf_qdot4pair64_avx2,@function
+#endif
 dpdf_qdot4pair64_avx2:
     .cfi_startproc
     mov eax, 0x00010001
@@ -511,5 +513,7 @@ dpdf_qdot4pair64_avx2:
     vzeroupper
     ret
     .cfi_endproc
+#ifdef __ELF__
 .size dpdf_qdot4pair64_avx2,.-dpdf_qdot4pair64_avx2
 .section .note.GNU-stack,"",@progbits
+#endif

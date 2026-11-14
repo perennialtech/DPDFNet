@@ -1,4 +1,4 @@
-/* Linux x86-64 SysV, AVX2/FMA: one K64 activation row, 192 outputs.
+/* x86-64 SysV, AVX2/FMA: one K64 activation row, 192 outputs.
  * (activation, packed, weight sums, scales, bias, output, activation scale, zp)
  * Two passes of twelve 8-column accumulators: twelve independent reductions
  * hide the AVX-VNNI generation's VPDPBUSD latency, where eight cannot.
@@ -10,8 +10,10 @@
 .text
 .p2align 5
 .globl dpdf_qaffine64_fused_avx2
+#ifdef __ELF__
 .hidden dpdf_qaffine64_fused_avx2
 .type dpdf_qaffine64_fused_avx2,@function
+#endif
 dpdf_qaffine64_fused_avx2:
     .cfi_startproc
     vmovd r10d, xmm0
@@ -1338,5 +1340,7 @@ dpdf_qaffine64_fused_avx2:
     vzeroupper
     ret
     .cfi_endproc
+#ifdef __ELF__
 .size dpdf_qaffine64_fused_avx2,.-dpdf_qaffine64_fused_avx2
 .section .note.GNU-stack,"",@progbits
+#endif

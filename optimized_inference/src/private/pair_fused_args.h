@@ -2,8 +2,9 @@
 #define DPDF_PAIR_FUSED_ARGS_H
 #include <stddef.h>
 #include <stdint.h>
+#include "asm_abi.h"
 
-/* Private Linux x86-64 SysV leaf contract, exactly four K64 activation rows.
+/* Private x86-64 SysV leaf contract, exactly four K64 activation rows.
  * Weight tiles each contain 64*8 packed bytes; each metadata vector has8 lanes.
  * Each output row writes8 floats, with stride_bytes bytes between rows.
  * All inputs/metadata remain read-only; normal native callers own each output.
@@ -35,5 +36,5 @@ _Static_assert(offsetof(dpdf_pair_fused_args,output1)==80,"Fused-pair output1 of
 _Static_assert(offsetof(dpdf_pair_fused_args,stride_bytes)==88,"Fused-pair stride offset");
 _Static_assert(offsetof(dpdf_pair_fused_args,activation_scale)==96,"Fused-pair scale offset");
 _Static_assert(offsetof(dpdf_pair_fused_args,zero_point)==112,"Fused-pair zero-point offset");
-void dpdf_qaffine4pair64_fused_avx2(const dpdf_pair_fused_args *);
+DPDF_SYSV void dpdf_qaffine4pair64_fused_avx2(const dpdf_pair_fused_args *);
 #endif

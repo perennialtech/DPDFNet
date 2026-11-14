@@ -9,15 +9,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include "asm_abi.h"
+#include "pages.h"
 #include <xmmintrin.h>
 
-#if !defined(__x86_64__) || !defined(__linux__)
-#error This direct fused contract requires Linux x86-64 SysV.
+#ifndef __x86_64__
+#error This direct fused contract requires x86-64.
 #endif
 
-void dpdf_qaffine64_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
+DPDF_SYSV void dpdf_qaffine64_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
         const float *,const float *,float *,float,int);
 #define CHECK(value) do { if (!(value)) { fprintf(stderr,"Fused contract line %d\n",__LINE__); return 1; } } while (0)
 
@@ -33,25 +33,25 @@ static uint32_t random_u32(void) {
 }
 
 static int allocate_region(region *r,size_t bytes,int at_end,size_t gap) {
-    long page=sysconf(_SC_PAGESIZE);
+    long page=page_size();
     if (page<=0) return -1;
     size_t page_bytes=(size_t)page;
     size_t pages=(bytes+gap+page_bytes-1)/page_bytes;
     r->mapping_bytes=(pages+2)*page_bytes;
-    r->mapping=mmap(NULL,r->mapping_bytes,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
-    if (r->mapping==MAP_FAILED) return -1;
+    r->mapping=map_none(r->mapping_bytes);
+    if (r->mapping==NULL) return -1;
     r->writable=r->mapping+page_bytes;
     r->writable_bytes=pages*page_bytes;
     r->payload=at_end?r->writable+r->writable_bytes-bytes-gap:r->writable+gap;
     r->payload_bytes=bytes;
-    if (mprotect(r->writable,r->writable_bytes,PROT_READ|PROT_WRITE)) {
-        munmap(r->mapping,r->mapping_bytes); return -1;
+    if (protect_rw(r->writable,r->writable_bytes)) {
+        unmap(r->mapping,r->mapping_bytes); return -1;
     }
     return 0;
 }
 
 static int fill_region(region *r,const void *payload) {
-    if (mprotect(r->writable,r->writable_bytes,PROT_READ|PROT_WRITE)) return -1;
+    if (protect_rw(r->writable,r->writable_bytes)) return -1;
     memset(r->writable,0xa5,r->writable_bytes);
     if (payload) memcpy(r->payload,payload,r->payload_bytes);
     else memset(r->payload,0xcd,r->payload_bytes);
@@ -152,7 +152,7 @@ int main(void) {
                     const void *payloads[]={a,packed,sums,scales,bias,NULL};
                     for (int b=0;b<6;++b) {
                         CHECK(fill_region(buffers+b,payloads[b])==0);
-                        if (b<5) CHECK(mprotect(buffers[b].writable,buffers[b].writable_bytes,PROT_READ)==0);
+                        if (b<5) CHECK(protect_ro(buffers[b].writable,buffers[b].writable_bytes)==0);
                     }
                     dpdf_qaffine64_fused_avx2((const int8_t *)buffers[0].payload,
                             (const int8_t *)buffers[1].payload,(const int32_t *)buffers[2].payload,
@@ -173,7 +173,7 @@ int main(void) {
                     CHECK(fegetround()==modes[rounding] && (_mm_getcsr()&0xffc0u)==controls);
                     ++calls; outputs+=n;
                 }
-                for (int b=0;b<6;++b) CHECK(munmap(buffers[b].mapping,buffers[b].mapping_bytes)==0);
+                for (int b=0;b<6;++b) CHECK(unmap(buffers[b].mapping,buffers[b].mapping_bytes)==0);
             }
         }
     }

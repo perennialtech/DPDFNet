@@ -1,6 +1,6 @@
 /* Independent corrected-integer + scalar FP32/fmaf oracle for fused pair.
  * Exact-length mmap guards and read-only source/argument pages check assembler
- * accesses that ASAN cannot instrument. Only Linux x86-64 SysV is supported. */
+ * accesses that ASAN cannot instrument. The kernels use the x86-64 SysV ABI. */
 #define _GNU_SOURCE
 #include "pair_fused_args.h"
 #include <fenv.h>
@@ -9,12 +9,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include "pages.h"
 #include <xmmintrin.h>
 
-#if !defined(__x86_64__) || !defined(__linux__)
-#error This direct contract requires Linux x86-64 SysV.
+#ifndef __x86_64__
+#error This direct contract requires x86-64.
 #endif
 #define CHECK(value) do { if (!(value)) { fprintf(stderr,"Pair fused contract line %d\n",__LINE__); return 1; } } while (0)
 
@@ -30,25 +29,25 @@ static uint32_t random_u32(void) {
 }
 
 static int allocate_region(region *r,size_t bytes,int at_end,size_t gap) {
-    long page=sysconf(_SC_PAGESIZE);
+    long page=page_size();
     if (page<=0) return -1;
     size_t page_bytes=(size_t)page;
     size_t pages=(bytes+gap+page_bytes-1)/page_bytes;
     r->mapping_bytes=(pages+2)*page_bytes;
-    r->mapping=mmap(NULL,r->mapping_bytes,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
-    if (r->mapping==MAP_FAILED) return -1;
+    r->mapping=map_none(r->mapping_bytes);
+    if (r->mapping==NULL) return -1;
     r->writable=r->mapping+page_bytes;
     r->writable_bytes=pages*page_bytes;
     r->payload=at_end?r->writable+r->writable_bytes-bytes-gap:r->writable+gap;
     r->payload_bytes=bytes;
-    if (mprotect(r->writable,r->writable_bytes,PROT_READ|PROT_WRITE)) {
-        munmap(r->mapping,r->mapping_bytes); return -1;
+    if (protect_rw(r->writable,r->writable_bytes)) {
+        unmap(r->mapping,r->mapping_bytes); return -1;
     }
     return 0;
 }
 
 static int fill_region(region *r,const void *source) {
-    if (mprotect(r->writable,r->writable_bytes,PROT_READ|PROT_WRITE)) return -1;
+    if (protect_rw(r->writable,r->writable_bytes)) return -1;
     memset(r->writable,0xa5,r->writable_bytes);
     if (source) memcpy(r->payload,source,r->payload_bytes);
     return 0;
@@ -168,7 +167,7 @@ int main(void) {
                                                scales[0],scales[1],bias[0],bias[1]};
                         for (int b=0;b<9;++b) {
                             CHECK(fill_region(buffers+b,sources[b])==0);
-                            CHECK(mprotect(buffers[b].writable,buffers[b].writable_bytes,PROT_READ)==0);
+                            CHECK(protect_ro(buffers[b].writable,buffers[b].writable_bytes)==0);
                         }
                         CHECK(fill_region(buffers+10,NULL)==0 && fill_region(buffers+11,NULL)==0);
                         memset(expected_bytes,0xa5,sizeof(expected_bytes));
@@ -190,7 +189,7 @@ int main(void) {
                         memcpy(args.activation_scale,activation_scales,sizeof(activation_scales));
                         memcpy(args.zero_point,zero_point,sizeof(zero_point));
                         CHECK(fill_region(buffers+9,&args)==0);
-                        CHECK(mprotect(buffers[9].writable,buffers[9].writable_bytes,PROT_READ)==0);
+                        CHECK(protect_ro(buffers[9].writable,buffers[9].writable_bytes)==0);
                         dpdf_qaffine4pair64_fused_avx2((const dpdf_pair_fused_args *)buffers[9].payload);
                         for (int output=0;output<2;++output) {
                             if (memcmp(buffers[10+output].payload,expected_bytes[output],output_bytes)) {
@@ -205,7 +204,7 @@ int main(void) {
                         CHECK(fegetround()==modes[rounding] && (_mm_getcsr()&0xffc0u)==controls);
                         ++calls; outputs+=64;
                     }
-                    for (int b=0;b<12;++b) CHECK(munmap(buffers[b].mapping,buffers[b].mapping_bytes)==0);
+                    for (int b=0;b<12;++b) CHECK(unmap(buffers[b].mapping,buffers[b].mapping_bytes)==0);
                 }
             }
         }

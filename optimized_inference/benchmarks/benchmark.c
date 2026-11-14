@@ -1,11 +1,46 @@
 #define _POSIX_C_SOURCE 200809L
 #include "../tools/support.h"
+#include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+static int64_t monotonic_ns(void) {
+    LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);
+    return c.QuadPart / f.QuadPart * INT64_C(1000000000) + c.QuadPart % f.QuadPart * INT64_C(1000000000) / f.QuadPart;
+}
+static int64_t cpu_ns(void) { /* Kernel plus user time, in 100 ns units. */
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) exit(1);
+    ULARGE_INTEGER k = {.LowPart = kernel.dwLowDateTime, .HighPart = kernel.dwHighDateTime};
+    ULARGE_INTEGER u = {.LowPart = user.dwLowDateTime, .HighPart = user.dwHighDateTime};
+    return (int64_t)(k.QuadPart + u.QuadPart) * 100;
+}
+/* A high-resolution timer: plain waits round up to the 15.6 ms timer tick. */
+static void sleep_until(int64_t deadline) {
+    static HANDLE timer;
+    if (!timer && !(timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS))) exit(1);
+    for (int64_t left; (left = deadline - monotonic_ns()) > 0;) {
+        LARGE_INTEGER due = {.QuadPart = -((left + 99) / 100)};
+        if (!SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) exit(1);
+        WaitForSingleObject(timer, INFINITE);
+    }
+}
+static size_t rss(void) {
+    PROCESS_MEMORY_COUNTERS c;
+    return GetProcessMemoryInfo(GetCurrentProcess(), &c, sizeof(c)) ? c.WorkingSetSize : 0;
+}
+#else
 #include <time.h>
 #include <unistd.h>
-#include <string.h>
 static int64_t nanoseconds(clockid_t clock) {
     struct timespec t; if (clock_gettime(clock, &t)) { perror("clock_gettime"); exit(1); }
     return (int64_t)t.tv_sec * INT64_C(1000000000) + t.tv_nsec;
+}
+static int64_t monotonic_ns(void) { return nanoseconds(CLOCK_MONOTONIC); }
+static int64_t cpu_ns(void) { return nanoseconds(CLOCK_PROCESS_CPUTIME_ID); }
+static void sleep_until(int64_t deadline) {
+    struct timespec t = {deadline / INT64_C(1000000000), deadline % INT64_C(1000000000)};
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL)) {}
 }
 static size_t rss(void) {
     FILE *f = fopen("/proc/self/statm", "r"); unsigned long total, resident;
@@ -13,6 +48,7 @@ static size_t rss(void) {
     int ok = fscanf(f, "%lu %lu", &total, &resident) == 2; fclose(f);
     return ok ? (size_t)resident * (size_t)sysconf(_SC_PAGESIZE) : 0;
 }
+#endif
 static int compare(const void *a, const void *b) {
     double x = *(const double *)a, y = *(const double *)b; return (x > y) - (x < y);
 }
@@ -53,16 +89,13 @@ int main(int argc, char **argv) {
     double sum = 0; size_t over = 0, late = 0;
     int64_t cpu_start = 0; /* Process CPU over the timed hops, helper spins included. */
     float output[962];
-    int64_t deadline = nanoseconds(CLOCK_MONOTONIC);
+    int64_t deadline = monotonic_ns();
     for (size_t i = 0; i < hops + 120; ++i) {
-        if (i == 120) cpu_start = nanoseconds(CLOCK_PROCESS_CPUTIME_ID);
-        if (paced) {
-            struct timespec t = {deadline / INT64_C(1000000000), deadline % INT64_C(1000000000)};
-            while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL)) {}
-        }
-        int64_t t0 = nanoseconds(CLOCK_MONOTONIC);
+        if (i == 120) cpu_start = cpu_ns();
+        if (paced) sleep_until(deadline);
+        int64_t t0 = monotonic_ns();
         if (dpdfnet_process(m, frames + (i % frame_count) * 962, state, output, state)) return 1;
-        int64_t t1 = nanoseconds(CLOCK_MONOTONIC);
+        int64_t t1 = monotonic_ns();
         if (i >= 120) {
             double ms = (double)(t1 - t0) / 1e6; times[i - 120] = ms; sum += ms;
             over += ms > 10;
@@ -71,7 +104,7 @@ int main(int argc, char **argv) {
         deadline += INT64_C(10000000);
         if (paced && t1 > deadline) deadline = t1; /* Record miss before restarting cadence. */
     }
-    double cpu = (double)(nanoseconds(CLOCK_PROCESS_CPUTIME_ID) - cpu_start) / 1e6;
+    double cpu = (double)(cpu_ns() - cpu_start) / 1e6;
     size_t after = rss(); qsort(times, hops, sizeof(double), compare);
     printf("{\"model\":\"%s\",\"input\":\"%s\",\"mode\":\"%s\",\"single_thread\":%s,\"hops\":%zu,"
            "\"mean_ms\":%.6f,\"cpu_ms\":%.6f,\"p99_ms\":%.6f,\"max_ms\":%.6f,"

@@ -1,11 +1,13 @@
-/* Research-only Linux x86-64 SysV; K=64, output=64 i32.
+/* Research-only x86-64 SysV; K=64, output=64 i32.
  * W7A8 direct unsigned activation and signed seven-bit weights. */
 .intel_syntax noprefix
 .text
 .p2align 5
 .globl dpdf_qdot64_fixed_avx2
+#ifdef __ELF__
 .hidden dpdf_qdot64_fixed_avx2
 .type dpdf_qdot64_fixed_avx2,@function
+#endif
 dpdf_qdot64_fixed_avx2:
     .cfi_startproc
     vpxor ymm0, ymm0, ymm0
@@ -430,5 +432,7 @@ dpdf_qdot64_fixed_avx2:
     vzeroupper
     ret
     .cfi_endproc
+#ifdef __ELF__
 .size dpdf_qdot64_fixed_avx2,.-dpdf_qdot64_fixed_avx2
 .section .note.GNU-stack,"",@progbits
+#endif

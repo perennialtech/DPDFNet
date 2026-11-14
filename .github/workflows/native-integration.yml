@@ -64,3 +64,38 @@ jobs:
       - name: Run contracts for both models
         if: '!matrix.pgo'
         run: ctest --test-dir build/ci --output-on-failure --parallel 1
+  windows:
+    name: Windows release shared (PGO)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+        working-directory: optimized_inference
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check generated VNNI assembly
+        run: python3 tools/generate_vnni.py --check
+      - name: Verify both model weights
+        run: sha256sum -c models/SHA256SUMS
+      - name: Build recommended PGO release and run contracts
+        run: python3 tools/build.py --build-dir build/ci --jobs 2
+      - name: Test native Python streaming integration
+        shell: pwsh
+        run: |
+          if (-not (Test-Path build/ci/libdpdfnet.dll)) { throw 'build/ci/libdpdfnet.dll is missing' }
+          python -m pip install -e '../package[test]'
+          $env:DPDFNET_NATIVE_BUILD = 'build/ci'
+          python -m pytest -q ../package/tests/test_native_streaming.py

@@ -2,6 +2,7 @@
  * AVX2 path never contains instructions unavailable on an older CPU.
  * Quantization is unchanged: u8 activations <=254 and signed weights <=63.
  * Pair products fit i16, and K<=512 bounds the complete sum within i32. */
+#include "asm_abi.h"
 #ifdef DPDF_INT8_VNNI
 #define DPDF_DOT4(sum,a,w) _mm256_dpbusd_avx_epi32(sum,a,w)
 #include "int8_vnni_aliases.h"
@@ -129,16 +130,16 @@ static void quantize_rows(const float *x,int8_t *out,int k,int m,float *scales,i
 
 #ifndef DPDF_DISABLE_QAFFINE_ROW
 #ifdef DPDF_QASM64
-void dpdf_qdot64_fixed_avx2(const int8_t *,const int8_t *,int32_t *);
+DPDF_SYSV void dpdf_qdot64_fixed_avx2(const int8_t *,const int8_t *,int32_t *);
 #if DPDF_MODEL_SIZE == 2
 #ifdef DPDF_QFUSED256
-void dpdf_qaffine256_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
+DPDF_SYSV void dpdf_qaffine256_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
         const float *,const float *,float *,float,int,int);
 #endif
 #else
 #endif
 #ifdef DPDF_QFUSED64
-void dpdf_qaffine64_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
+DPDF_SYSV void dpdf_qaffine64_fused_avx2(const int8_t *,const int8_t *,const int32_t *,
         const float *,const float *,float *,float,int);
 #endif
 #endif
@@ -264,7 +265,7 @@ static __attribute__((noinline)) void qdot4pair_generic(const int8_t *activation
 }
 
 #ifdef DPDF_QPAIR_FIXED
-void dpdf_qdot4pair64_avx2(const int8_t *,const int8_t *,const int8_t *,__m256i *);
+DPDF_SYSV void dpdf_qdot4pair64_avx2(const int8_t *,const int8_t *,const int8_t *,__m256i *);
 #endif
 static __attribute__((noinline)) void qdot4pair(const int8_t *activation,
         const int8_t *packed0,const int8_t *packed1,int k,__m256i *out) {

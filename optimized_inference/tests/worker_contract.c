@@ -2,13 +2,17 @@
  * spectra, state and raised exception flags against single-threaded contexts
  * in every rounding mode with and without FTZ/DAZ, in-place and out-of-place
  * buffers, repeated creation and destruction, the single-CPU fallback, and
- * use and destruction of an inherited context after fork. */
+ * (outside Windows) use and destruction of an inherited context after fork. */
 #define _GNU_SOURCE
 #include "../tools/support.h"
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sched.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 #include <fenv.h>
 #include <immintrin.h>
 #include <string.h>
@@ -41,7 +45,17 @@ int main(int argc, char **argv) {
         }
         dpdfnet_model *single = dpdfnet_create_with_flags(id, w, info->weight_floats, DPDFNET_CREATE_SINGLE_THREAD);
         CHECK(single);
-        /* With one allowed CPU, the default context has no helper. */
+        /* With one allowed CPU, the default context has no helper. Linux
+         * checks the calling thread's affinity; Windows the process's, which
+         * its new threads get. */
+#ifdef _WIN32
+        DWORD_PTR allowed, system;
+        CHECK(GetProcessAffinityMask(GetCurrentProcess(), &allowed, &system) && allowed);
+        CHECK(SetProcessAffinityMask(GetCurrentProcess(), allowed & -allowed));
+        dpdfnet_model *pinned = dpdfnet_create(id, w, info->weight_floats);
+        CHECK(SetProcessAffinityMask(GetCurrentProcess(), allowed));
+        const int cpus = __builtin_popcountll(allowed);
+#else
         cpu_set_t allowed, one;
         CHECK(sched_getaffinity(0, sizeof(allowed), &allowed) == 0);
         int first = 0;
@@ -50,11 +64,13 @@ int main(int argc, char **argv) {
         CHECK(sched_setaffinity(0, sizeof(one), &one) == 0);
         dpdfnet_model *pinned = dpdfnet_create(id, w, info->weight_floats);
         CHECK(sched_setaffinity(0, sizeof(allowed), &allowed) == 0);
+        const int cpus = CPU_COUNT(&allowed);
+#endif
         CHECK(pinned && dpdfnet_owned_bytes(pinned) == dpdfnet_owned_bytes(single));
         dpdfnet_destroy(pinned);
         dpdfnet_model *worker = dpdfnet_create(id, w, info->weight_floats);
         CHECK(worker);
-        if (CPU_COUNT(&allowed) >= 2) CHECK(dpdfnet_owned_bytes(worker) > dpdfnet_owned_bytes(single));
+        if (cpus >= 2) CHECK(dpdfnet_owned_bytes(worker) > dpdfnet_owned_bytes(single));
         else puts("One allowed CPU: comparing two single-threaded contexts");
         free(w);
         size_t n = info->state_floats;
@@ -87,6 +103,7 @@ int main(int argc, char **argv) {
             CHECK((_mm_getcsr() & 0xffc0u) == controls);
         }
         _mm_setcsr(original);
+#ifndef _WIN32
         /* A forked child has no helper: an inherited context still matches and
          * can be destroyed. The alarm turns a hang into a failure. */
         fflush(NULL);
@@ -107,6 +124,7 @@ int main(int argc, char **argv) {
         int status = 0;
         CHECK(waitpid(child, &status, 0) == child);
         CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+#endif
         dpdfnet_destroy(single); dpdfnet_destroy(worker);
         free(a); free(b); free(next);
     }

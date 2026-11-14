@@ -1,8 +1,23 @@
 # Building and installing
 
-The validated toolchain is GCC 12.2 and CMake 3.25 on Linux x86-64. GCC,
-CMake 3.18+, and an AVX2/FMA CPU are required. Build and run inside Linux or WSL2;
-the hand-written assembly uses the Linux System V ABI.
+The validated toolchains are GCC 12.2 with CMake 3.25 on Linux x86-64, and
+MSYS2 UCRT64 GCC 16.2 with CMake 4.4 on Windows 11 x64. GCC, CMake 3.18+, and an
+AVX2/FMA CPU are required; MSVC and clang-cl are not supported. The
+hand-written assembly uses the System V ABI on both systems: on Windows, GCC
+calls it through `sysv_abi` declarations.
+
+## Windows
+
+Build from an MSYS2 UCRT64 shell with
+`pacman -S mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,python}`. The commands below
+are the same; the build produces `libdpdfnet.dll` and `.exe` tools. The DLL
+exports only the public API and imports only `KERNEL32.dll` and the Universal
+C Runtime, so it loads from any process (such as Python's `ctypes`) without
+MSYS2 on `PATH`. Sanitizer builds are Linux-only.
+
+The library needs Windows 10 version 1607 or later. Its helper thread's
+pre-wake timer needs version 1803 or later (Windows Server 2019); on older
+versions, such as Windows Server 2016, every context runs single-threaded.
 
 ## Recommended release build
 
@@ -75,10 +90,10 @@ cmake --build build-static --parallel 2
 ctest --test-dir build-static --output-on-failure
 ```
 
-Direct static consumers must link `libm` and the system thread library
-(`-pthread`). Exported CMake targets carry both dependencies automatically.
-The shared library exports only the eight public functions in `dpdfnet.h`;
-graph and kernel symbols are private.
+Direct static consumers must link `libm` and, on Linux, the system thread
+library (`-pthread`). Exported CMake targets carry these dependencies
+automatically. The shared library exports only the eight public functions in
+`dpdfnet.h`; graph and kernel symbols are private.
 
 ## Sanitizers and audio regression
 

@@ -1,4 +1,4 @@
-/* Linux x86-64 SysV AVX2/FMA, four K64 rows and two eight-column tiles.
+/* x86-64 SysV AVX2/FMA, four K64 rows and two eight-column tiles.
  * RDI points to the read-only 128-byte pair_fused_args contract.
  * Increasing-K sums and the separate FP32 scale product are unchanged.
  * Only caller-saved GPR/YMM registers; no stack writes or allocations. */
@@ -6,8 +6,10 @@
 .text
 .p2align 5
 .globl dpdf_qaffine4pair64_fused_avx2
+#ifdef __ELF__
 .hidden dpdf_qaffine4pair64_fused_avx2
 .type dpdf_qaffine4pair64_fused_avx2,@function
+#endif
 dpdf_qaffine4pair64_fused_avx2:
     .cfi_startproc
     mov rcx, QWORD PTR [rdi+0]
@@ -594,5 +596,7 @@ dpdf_qaffine4pair64_fused_avx2:
     vzeroupper
     ret
     .cfi_endproc
+#ifdef __ELF__
 .size dpdf_qaffine4pair64_fused_avx2,.-dpdf_qaffine4pair64_fused_avx2
 .section .note.GNU-stack,"",@progbits
+#endif
