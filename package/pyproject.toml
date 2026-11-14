@@ -5,9 +5,9 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dpdfnet"
+name = "dpdfnet-native"
 version = "1.0.0"
-description = "Native x86-64 CPU inference for DPDFNet 48 kHz speech enhancement."
+description = "Native x86-64 CPU inference for DPDFNet 48 kHz speech enhancement (a fork of Ceva-IP/DPDFNet)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -47,12 +47,13 @@ mp3 = [
 ]
 
 [project.scripts]
-dpdfnet = "dpdfnet.cli:main"
+dpdfnet-native = "dpdfnet_native.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/ceva-ip/DPDFNet"
-Repository = "https://github.com/ceva-ip/DPDFNet"
-Issues = "https://github.com/ceva-ip/DPDFNet/issues"
+Homepage = "https://github.com/perennialtech/DPDFNet"
+Repository = "https://github.com/perennialtech/DPDFNet"
+Issues = "https://github.com/perennialtech/DPDFNet/issues"
+Upstream = "https://github.com/ceva-ip/DPDFNet"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -22,7 +22,7 @@ class StreamEnhancer:
 
     .. note::
         This path uses a hand-rolled causal STFT / ISTFT and will **not**
-        produce bit-identical output to :func:`dpdfnet.enhance`, which uses
+        produce bit-identical output to :func:`dpdfnet_native.enhance`, which uses
         ``center=True`` reflection padding.  Both are algorithmically correct;
         the causal variant is necessary for real-time use.
 

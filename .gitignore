@@ -37,7 +37,7 @@ package/CONTRIBUTING.md
 *.whl
 *.cfg
 *.gz
-dpdfnet.egg-info/
+*.egg-info/
 package/build/
 
 # Model Zoo

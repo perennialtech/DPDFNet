@@ -34,9 +34,9 @@ def _build_frame_progress_callback(
 
 def _version_string() -> str:
     try:
-        return f"dpdfnet {metadata.version('dpdfnet')}"
+        return f"dpdfnet-native {metadata.version('dpdfnet-native')}"
     except metadata.PackageNotFoundError:
-        return "dpdfnet (local)"
+        return "dpdfnet-native (local)"
 
 
 def _add_model_arg(parser: argparse.ArgumentParser) -> None:
@@ -61,7 +61,7 @@ def _add_attn_limit_arg(parser: argparse.ArgumentParser) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="dpdfnet",
+        prog="dpdfnet-native",
         description="DPDFNet native CPU speech enhancement toolkit (48 kHz).",
     )
     parser.add_argument(

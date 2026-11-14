@@ -87,7 +87,7 @@ def native_library_path() -> Path:
             "this installation does not include it"
         )
         raise FileNotFoundError(
-            f"The native DPDFNet library was not found: {where}. Install a dpdfnet "
+            f"The native DPDFNet library was not found: {where}. Install a dpdfnet-native "
             "wheel for Linux or Windows x86-64, or build optimized_inference "
             "(python optimized_inference/tools/build.py) and point "
             "DPDFNET_NATIVE_LIBRARY at the built library."

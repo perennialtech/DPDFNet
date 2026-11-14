@@ -50,7 +50,7 @@ class _FakeRunner:
 
 def _use_fake_runner(monkeypatch, **kwargs):
     """Make every NativeFrameRunner a _FakeRunner; returns the ones created."""
-    from dpdfnet import native_backend
+    from dpdfnet_native import native_backend
 
     created = []
 
@@ -66,17 +66,17 @@ def _use_fake_runner(monkeypatch, **kwargs):
 
 
 def test_import_surface() -> None:
-    import dpdfnet
+    import dpdfnet_native
 
-    assert hasattr(dpdfnet, "enhance")
-    assert hasattr(dpdfnet, "enhance_file")
-    assert hasattr(dpdfnet, "StreamEnhancer")
-    assert hasattr(dpdfnet, "available_models")
-    assert not hasattr(dpdfnet, "download")
+    assert hasattr(dpdfnet_native, "enhance")
+    assert hasattr(dpdfnet_native, "enhance_file")
+    assert hasattr(dpdfnet_native, "StreamEnhancer")
+    assert hasattr(dpdfnet_native, "available_models")
+    assert not hasattr(dpdfnet_native, "download")
 
 
 def _patch_offline_audio(monkeypatch, spec_r, postprocess=None):
-    import dpdfnet.audio as audio_mod
+    import dpdfnet_native.audio as audio_mod
 
     monkeypatch.setattr(audio_mod, "to_mono", lambda x: np.asarray(x, dtype=np.float32))
     monkeypatch.setattr(audio_mod, "ensure_sample_rate", lambda x, _a, _b: np.asarray(x, dtype=np.float32))
@@ -90,7 +90,7 @@ def _patch_offline_audio(monkeypatch, spec_r, postprocess=None):
 
 
 def test_enhance_progress_callback_reports_frame_progress(monkeypatch) -> None:
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     created = _use_fake_runner(monkeypatch, win_len=4)
     _patch_offline_audio(monkeypatch, np.zeros((1, 4, 3, 2), dtype=np.float32))
@@ -110,7 +110,7 @@ def test_enhance_progress_callback_reports_frame_progress(monkeypatch) -> None:
 
 
 def test_enhance_applies_attn_limit_before_postprocess(monkeypatch) -> None:
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     spec_r = np.arange(1, 1 + (1 * 4 * 3 * 2), dtype=np.float32).reshape(1, 4, 3, 2)
     outputs = np.full((4, 1, 1, 3, 2), 77.0, dtype=np.float32)
@@ -135,7 +135,7 @@ def test_enhance_applies_attn_limit_before_postprocess(monkeypatch) -> None:
 
 
 def test_enhance_feeds_each_frame_and_resets_reused_runner(monkeypatch) -> None:
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     spec_r = np.random.default_rng(3).normal(size=(1, 5, 3, 2)).astype(np.float32)
     captured = []
@@ -154,7 +154,7 @@ def test_enhance_feeds_each_frame_and_resets_reused_runner(monkeypatch) -> None:
 
 
 def test_enhance_passes_single_thread_to_the_runner(monkeypatch) -> None:
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     created = _use_fake_runner(monkeypatch, win_len=4)
     _patch_offline_audio(monkeypatch, np.zeros((1, 2, 3, 2), dtype=np.float32))
@@ -170,7 +170,7 @@ def test_enhance_passes_single_thread_to_the_runner(monkeypatch) -> None:
 def _make_fake_stream_enhancer(monkeypatch, win_len: int = 8, model_sr: int = 16000):
     """Return a StreamEnhancer whose model outputs zeros."""
     _use_fake_runner(monkeypatch, win_len=win_len, sample_rate=model_sr)
-    from dpdfnet import StreamEnhancer
+    from dpdfnet_native import StreamEnhancer
 
     return StreamEnhancer()
 
@@ -252,7 +252,7 @@ def _make_passthrough_stream_enhancer(monkeypatch, win_len: int = 320, model_sr:
     testing signal reconstruction properties.
     """
     _use_fake_runner(monkeypatch, win_len=win_len, sample_rate=model_sr, passthrough=True)
-    from dpdfnet import StreamEnhancer
+    from dpdfnet_native import StreamEnhancer
 
     return StreamEnhancer()
 
@@ -327,7 +327,7 @@ def test_stream_and_offline_both_reconstruct_with_passthrough(monkeypatch) -> No
     HOP = WIN // 2
     MODEL_SR = 16000
 
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     _use_fake_runner(monkeypatch, win_len=WIN, sample_rate=MODEL_SR, passthrough=True)
 
@@ -338,7 +338,7 @@ def test_stream_and_offline_both_reconstruct_with_passthrough(monkeypatch) -> No
     offline_out = api.enhance(audio=signal, sample_rate=MODEL_SR)
 
     # Streaming (single large chunk)
-    from dpdfnet import StreamEnhancer
+    from dpdfnet_native import StreamEnhancer
 
     se = StreamEnhancer()
     stream_out = np.concatenate([
@@ -404,7 +404,7 @@ def test_stream_enhancer_stereo_converted_to_mono(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_to_mono_passthrough_for_1d() -> None:
-    from dpdfnet.audio import to_mono
+    from dpdfnet_native.audio import to_mono
     x = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     result = to_mono(x)
     np.testing.assert_array_equal(result, x)
@@ -412,7 +412,7 @@ def test_to_mono_passthrough_for_1d() -> None:
 
 
 def test_to_mono_averages_stereo_channels() -> None:
-    from dpdfnet.audio import to_mono
+    from dpdfnet_native.audio import to_mono
     # shape (samples, channels) — axis-1 is channels, axis-0 is time
     left = np.array([1.0, 0.0], dtype=np.float32)
     right = np.array([0.0, 1.0], dtype=np.float32)
@@ -423,14 +423,14 @@ def test_to_mono_averages_stereo_channels() -> None:
 
 
 def test_to_mono_invalid_shape_raises() -> None:
-    from dpdfnet.audio import to_mono
+    from dpdfnet_native.audio import to_mono
     bad = np.zeros((2, 2, 2), dtype=np.float32)
     with pytest.raises(ValueError, match="Expected mono/stereo"):
         to_mono(bad)
 
 
 def test_fit_length_truncates() -> None:
-    from dpdfnet.audio import fit_length
+    from dpdfnet_native.audio import fit_length
     x = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
     result = fit_length(x, 2)
     assert len(result) == 2
@@ -438,7 +438,7 @@ def test_fit_length_truncates() -> None:
 
 
 def test_fit_length_pads_with_zeros() -> None:
-    from dpdfnet.audio import fit_length
+    from dpdfnet_native.audio import fit_length
     x = np.array([1.0, 2.0], dtype=np.float32)
     result = fit_length(x, 5)
     assert len(result) == 5
@@ -446,14 +446,14 @@ def test_fit_length_pads_with_zeros() -> None:
 
 
 def test_fit_length_exact_unchanged() -> None:
-    from dpdfnet.audio import fit_length
+    from dpdfnet_native.audio import fit_length
     x = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     result = fit_length(x, 3)
     np.testing.assert_array_equal(result, x)
 
 
 def test_pcm16_safe_clips_and_converts() -> None:
-    from dpdfnet.audio import pcm16_safe
+    from dpdfnet_native.audio import pcm16_safe
     x = np.array([-2.0, -1.0, 0.0, 1.0, 2.0], dtype=np.float32)
     result = pcm16_safe(x)
     assert result.dtype == np.int16
@@ -465,7 +465,7 @@ def test_pcm16_safe_clips_and_converts() -> None:
 
 
 def test_vorbis_window_dtype_and_length() -> None:
-    from dpdfnet.audio import vorbis_window
+    from dpdfnet_native.audio import vorbis_window
     win = vorbis_window(16)
     assert win.dtype == np.float32
     assert len(win) == 16
@@ -473,7 +473,7 @@ def test_vorbis_window_dtype_and_length() -> None:
 
 def test_vorbis_window_cola_at_50pct_overlap() -> None:
     """w[n]^2 + w[n + hop]^2 == 1 for all n in [0, hop)."""
-    from dpdfnet.audio import vorbis_window
+    from dpdfnet_native.audio import vorbis_window
     win_len = 32
     hop = win_len // 2
     w = vorbis_window(win_len).astype(np.float64)
@@ -482,7 +482,7 @@ def test_vorbis_window_cola_at_50pct_overlap() -> None:
 
 
 def test_make_stft_config_hop_is_half_win() -> None:
-    from dpdfnet.audio import make_stft_config
+    from dpdfnet_native.audio import make_stft_config
     cfg = make_stft_config(64)
     assert cfg.hop_size == 32
     assert cfg.win_len == 64
@@ -490,7 +490,7 @@ def test_make_stft_config_hop_is_half_win() -> None:
 
 
 def test_ensure_sample_rate_identity_when_same_sr() -> None:
-    from dpdfnet.audio import ensure_sample_rate
+    from dpdfnet_native.audio import ensure_sample_rate
     x = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     result = ensure_sample_rate(x, 16000, 16000)
     np.testing.assert_array_equal(result, x)
@@ -498,7 +498,7 @@ def test_ensure_sample_rate_identity_when_same_sr() -> None:
 
 
 def test_apply_attn_limit_none_returns_enhanced() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.ones((1, 4, 2, 2), dtype=np.float32)
     spec_enh = np.full((1, 4, 2, 2), 3.0, dtype=np.float32)
@@ -510,7 +510,7 @@ def test_apply_attn_limit_none_returns_enhanced() -> None:
 
 
 def test_apply_attn_limit_zero_db_returns_shifted_noisy_reference() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.arange(1, 1 + (1 * 7 * 1 * 2), dtype=np.float32).reshape(1, 7, 1, 2)
     spec_enh = np.full_like(spec_noisy, 99.0)
@@ -523,7 +523,7 @@ def test_apply_attn_limit_zero_db_returns_shifted_noisy_reference() -> None:
 
 
 def test_apply_attn_limit_finite_db_blends_shifted_noisy_and_enhanced() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.arange(1, 1 + (1 * 7 * 1 * 2), dtype=np.float32).reshape(1, 7, 1, 2)
     spec_enh = np.full_like(spec_noisy, 8.0)
@@ -539,7 +539,7 @@ def test_apply_attn_limit_finite_db_blends_shifted_noisy_and_enhanced() -> None:
 
 
 def test_apply_attn_limit_inf_returns_enhanced() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.ones((1, 4, 2, 2), dtype=np.float32)
     spec_enh = np.full((1, 4, 2, 2), 7.0, dtype=np.float32)
@@ -551,7 +551,7 @@ def test_apply_attn_limit_inf_returns_enhanced() -> None:
 
 @pytest.mark.parametrize("attn_limit_db", [-1.0, np.nan])
 def test_apply_attn_limit_invalid_values_raise(attn_limit_db: float) -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec = np.zeros((1, 4, 2, 2), dtype=np.float32)
 
@@ -564,13 +564,13 @@ def test_apply_attn_limit_invalid_values_raise(attn_limit_db: float) -> None:
 # ---------------------------------------------------------------------------
 
 def test_get_model_info_invalid_raises() -> None:
-    from dpdfnet.models import get_model_info
+    from dpdfnet_native.models import get_model_info
     with pytest.raises(ValueError, match="Unsupported model"):
         get_model_info("nonexistent_model_xyz")
 
 
 def test_registry_holds_the_two_native_models() -> None:
-    from dpdfnet import models
+    from dpdfnet_native import models
 
     assert models.supported_models() == ["dpdfnet2_48khz_hr", "dpdfnet8_48khz_hr"]
     assert models.DEFAULT_MODEL in models.MODEL_REGISTRY
@@ -581,7 +581,7 @@ def test_registry_holds_the_two_native_models() -> None:
 
 
 def test_available_model_entries_keys() -> None:
-    from dpdfnet import models
+    from dpdfnet_native import models
 
     entries = models.available_model_entries()
     assert [entry["name"] for entry in entries] == models.supported_models()
@@ -591,14 +591,14 @@ def test_available_model_entries_keys() -> None:
 
 
 def test_weights_are_found_in_the_source_tree() -> None:
-    from dpdfnet import models
+    from dpdfnet_native import models
 
     for name in models.supported_models():
         assert models.weights_path(name).name in {f"{name}.f32", "weights.f32"}
 
 
 def test_missing_library_override_names_the_variable(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
+    from dpdfnet_native import models
 
     monkeypatch.setenv("DPDFNET_NATIVE_LIBRARY", str(tmp_path / "missing.so"))
     assert models.find_native_library() is None
@@ -608,7 +608,7 @@ def test_missing_library_override_names_the_variable(tmp_path, monkeypatch) -> N
 
 
 def test_library_override_is_used(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
+    from dpdfnet_native import models
 
     library = tmp_path / "libcustom.so"
     library.write_bytes(b"stub")
@@ -621,7 +621,7 @@ def test_library_override_is_used(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_enhance_file_missing_input_raises(tmp_path) -> None:
-    from dpdfnet.api import enhance_file
+    from dpdfnet_native.api import enhance_file
     with pytest.raises(FileNotFoundError, match="Input file not found"):
         enhance_file(tmp_path / "nonexistent.wav", tmp_path / "out.wav")
 
@@ -629,7 +629,7 @@ def test_enhance_file_missing_input_raises(tmp_path) -> None:
 def test_enhance_file_default_output_path(tmp_path, monkeypatch) -> None:
     """When output_path is None, the output file is <stem>_enhanced.wav next to input."""
     import soundfile as sf
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     # Write a minimal valid WAV
     in_path = tmp_path / "speech.wav"
@@ -646,7 +646,7 @@ def test_enhance_file_default_output_path(tmp_path, monkeypatch) -> None:
 def test_enhance_file_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     """enhance_file() forwards attn_limit_db to enhance()."""
     import soundfile as sf
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     in_path = tmp_path / "speech.wav"
     out_path = tmp_path / "speech_out.wav"
@@ -669,7 +669,7 @@ def test_enhance_file_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
 def test__enhance_file_with_runner_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     """_enhance_file_with_runner() forwards attn_limit_db to _enhance_with_runner()."""
     import soundfile as sf
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     in_path = tmp_path / "speech.wav"
     out_path = tmp_path / "speech_out.wav"
@@ -695,7 +695,7 @@ def test__enhance_file_with_runner_forwards_attn_limit_db(tmp_path, monkeypatch)
 
 
 def test_read_audio_unsupported_extension_raises(tmp_path) -> None:
-    from dpdfnet.api import _read_audio
+    from dpdfnet_native.api import _read_audio
     bad = tmp_path / "clip.xyz"
     bad.write_bytes(b"data")
     with pytest.raises(ValueError, match="Unsupported audio format"):
@@ -705,7 +705,7 @@ def test_read_audio_unsupported_extension_raises(tmp_path) -> None:
 def test_read_audio_pydub_missing_import_error(tmp_path, monkeypatch) -> None:
     """Reading an .mp3 file without pydub installed raises a helpful ImportError."""
     import builtins
-    from dpdfnet.api import _read_audio
+    from dpdfnet_native.api import _read_audio
 
     mp3 = tmp_path / "clip.mp3"
     mp3.write_bytes(b"fake-mp3")
@@ -727,13 +727,13 @@ def test_read_audio_pydub_missing_import_error(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_cli_no_command_returns_0(capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
     exit_code = cli.main([])
     assert exit_code == 0
 
 
 def test_cli_models_command_lists_all_models(capsys) -> None:
-    from dpdfnet import cli, models
+    from dpdfnet_native import cli, models
     exit_code = cli.main(["models"])
     assert exit_code == 0
     output = capsys.readouterr().out
@@ -742,13 +742,13 @@ def test_cli_models_command_lists_all_models(capsys) -> None:
 
 
 def test_cli_enhance_dir_nonexistent_input_returns_error(tmp_path, capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
     exit_code = cli.main(["enhance-dir", str(tmp_path / "nope"), str(tmp_path / "out")])
     assert exit_code == 2
 
 
 def test_cli_enhance_dir_empty_dir_returns_error(tmp_path, capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
     in_dir = tmp_path / "empty"
     in_dir.mkdir()
     exit_code = cli.main(["enhance-dir", str(in_dir), str(tmp_path / "out")])
@@ -758,7 +758,7 @@ def test_cli_enhance_dir_empty_dir_returns_error(tmp_path, capsys) -> None:
 def test_cli_enhance_single_file(tmp_path, monkeypatch, capsys) -> None:
     """CLI enhance command calls enhance_file and reports the output path."""
     import soundfile as sf
-    from dpdfnet import cli, api
+    from dpdfnet_native import cli, api
 
     in_path = tmp_path / "input.wav"
     out_path = tmp_path / "output.wav"
@@ -766,7 +766,7 @@ def test_cli_enhance_single_file(tmp_path, monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(api, "enhance_file", lambda *_a, **_kw: out_path)
     # Also patch _run_enhance's import of enhance_file
-    import dpdfnet.cli as cli_mod
+    import dpdfnet_native.cli as cli_mod
     monkeypatch.setattr(cli_mod, "_run_enhance",
                         lambda _args: (print(f"Wrote enhanced audio: {out_path}") or 0))
 
@@ -778,7 +778,7 @@ def test_cli_enhance_single_file(tmp_path, monkeypatch, capsys) -> None:
 
 def test_cli_enhance_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     import soundfile as sf
-    from dpdfnet import api, cli
+    from dpdfnet_native import api, cli
 
     in_path = tmp_path / "input.wav"
     out_path = tmp_path / "output.wav"
@@ -803,7 +803,7 @@ def test_cli_enhance_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
 
 def test_cli_enhance_dir_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     import soundfile as sf
-    from dpdfnet import api, cli
+    from dpdfnet_native import api, cli
 
     in_dir = tmp_path / "in"
     out_dir = tmp_path / "out"
@@ -832,7 +832,7 @@ def test_cli_enhance_dir_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
 def test_cli_enhance_dir_threads_runners_by_worker_count(tmp_path, monkeypatch, workers) -> None:
     """One runner per worker thread, single-threaded when files run in parallel."""
     import soundfile as sf
-    from dpdfnet import cli
+    from dpdfnet_native import cli
 
     in_dir = tmp_path / "in"
     in_dir.mkdir()
@@ -857,7 +857,7 @@ def test_cli_enhance_dir_threads_runners_by_worker_count(tmp_path, monkeypatch, 
 
 
 def test_cli_has_no_download_command(capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["download"])
@@ -865,7 +865,7 @@ def test_cli_has_no_download_command(capsys) -> None:
 
 
 def test_removed_backend_options_are_rejected() -> None:
-    from dpdfnet import StreamEnhancer, enhance
+    from dpdfnet_native import StreamEnhancer, enhance
 
     with pytest.raises(TypeError):
         StreamEnhancer(backend="onnx")

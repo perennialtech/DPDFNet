@@ -1,27 +1,29 @@
-# dpdfnet
+# dpdfnet-native
 
 Native CPU speech enhancement with DPDFNet's 48 kHz high-resolution models,
 with offline and stateful streaming APIs.
+
+This is an independent fork of [Ceva-IP/DPDFNet](https://github.com/ceva-ip/DPDFNet),
+maintained at [perennialtech/DPDFNet](https://github.com/perennialtech/DPDFNet).
+It is not Ceva's `dpdfnet` package, which runs all of DPDFNet's 8, 16 and
+48 kHz models on ONNX Runtime. The two install side by side: this one imports
+as `dpdfnet_native` and its command is `dpdfnet-native`.
 
 Inference runs on the [optimized C runtime](https://github.com/perennialtech/DPDFNet/tree/main/optimized_inference):
 W7A8 integer kernels with FP32 recurrent state and hand-written AVX2/FMA
 assembly. The wheel bundles the library and both models' weights, so nothing
 is downloaded and no ONNX Runtime is needed.
 
-Version 1.0 removed the ONNX Runtime and OpenVINO backends and the 8 and
-16 kHz models. Use `dpdfnet<1` if you need those.
-
 ## Installation
 
 ```bash
-pip install "dpdfnet>=1"
+pip install dpdfnet-native
 ```
 
-Wheels exist only for Linux (glibc 2.27+) and Windows on x86-64, for Python
-3.11 and later. Keep the `>=1`: elsewhere, a plain `pip install dpdfnet`
-silently installs the 0.x ONNX release, whose API differs. To build a wheel
-from a repository checkout, with GCC and CMake 3.18+ (MSYS2 UCRT64 GCC on
-Windows):
+It is released as wheels only, for Linux (glibc 2.27+) and Windows on
+x86-64, Python 3.11 and later; elsewhere pip finds no matching distribution.
+To build a wheel from a repository checkout, with GCC and CMake 3.18+ (MSYS2
+UCRT64 GCC on Windows):
 
 ```bash
 pip install ./package
@@ -71,7 +73,7 @@ MP3 and other compressed formats require the optional `pydub` dependency and
 [ffmpeg](https://ffmpeg.org/) on your PATH:
 
 ```bash
-pip install 'dpdfnet[mp3]'
+pip install 'dpdfnet-native[mp3]'
 # also install ffmpeg, e.g.:
 #   Ubuntu/Debian:  sudo apt install ffmpeg
 #   Windows:        https://ffmpeg.org/download.html
@@ -93,18 +95,18 @@ Output is always written as PCM16 `.wav` regardless of the input format.
 Show help:
 
 ```bash
-dpdfnet --help
+dpdfnet-native --help
 ```
 
 Commands:
 
-1. `dpdfnet models`
+1. `dpdfnet-native models`
 - List the models and where the native library was found.
 
-2. `dpdfnet enhance <input> <output.wav> [--model <name>] [--attn-limit-db DB]`
+2. `dpdfnet-native enhance <input> <output.wav> [--model <name>] [--attn-limit-db DB]`
 - Enhance one audio file (any supported format; output is always `.wav`).
 
-3. `dpdfnet enhance-dir <input_dir> <output_dir> [--model <name>] [--workers N] [--attn-limit-db DB]`
+3. `dpdfnet-native enhance-dir <input_dir> <output_dir> [--model <name>] [--workers N] [--attn-limit-db DB]`
 - Enhance all supported audio files in a directory (non-recursive).
 - Files are processed concurrently; `--workers` sets the thread count (default: CPU count).
   With more than one worker, each runs single-threaded inference.
@@ -113,49 +115,49 @@ CLI examples:
 
 ```bash
 # Enhance one file
-dpdfnet enhance noisy.wav enhanced.wav --model dpdfnet8_48khz_hr --attn-limit-db 12
+dpdfnet-native enhance noisy.wav enhanced.wav --model dpdfnet8_48khz_hr --attn-limit-db 12
 
 # Enhance a directory (uses all CPU cores by default)
-dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --attn-limit-db 12
+dpdfnet-native enhance-dir ./noisy_wavs ./enhanced_wavs --attn-limit-db 12
 
 # Enhance a directory with a fixed worker count
-dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --workers 4 --attn-limit-db 12
+dpdfnet-native enhance-dir ./noisy_wavs ./enhanced_wavs --workers 4 --attn-limit-db 12
 ```
 
 ## Python API
 
 Top-level exports:
-- `dpdfnet.enhance`
-- `dpdfnet.enhance_file`
-- `dpdfnet.available_models`
-- `dpdfnet.StreamEnhancer`
+- `dpdfnet_native.enhance`
+- `dpdfnet_native.enhance_file`
+- `dpdfnet_native.available_models`
+- `dpdfnet_native.StreamEnhancer`
 
 In-memory enhancement:
 
 ```python
 import soundfile as sf
-import dpdfnet
+import dpdfnet_native
 
 audio, sr = sf.read("noisy.wav")
-enhanced = dpdfnet.enhance(audio, sample_rate=sr, model="dpdfnet8_48khz_hr", attn_limit_db=12)
+enhanced = dpdfnet_native.enhance(audio, sample_rate=sr, model="dpdfnet8_48khz_hr", attn_limit_db=12)
 sf.write("enhanced.wav", enhanced, sr)
 ```
 
 Enhance one file:
 
 ```python
-import dpdfnet
+import dpdfnet_native
 
-out_path = dpdfnet.enhance_file("noisy.wav", attn_limit_db=12)
+out_path = dpdfnet_native.enhance_file("noisy.wav", attn_limit_db=12)
 print(out_path)
 ```
 
 Model listing:
 
 ```python
-import dpdfnet
+import dpdfnet_native
 
-for row in dpdfnet.available_models():
+for row in dpdfnet_native.available_models():
     print(row["name"], row["ready"], row["weights_path"])
 ```
 
@@ -163,7 +165,7 @@ for row in dpdfnet.available_models():
 
 ### Real-time Microphone Enhancement
 
-Install `sounddevice` (not included in `dpdfnet` dependencies):
+Install `sounddevice` (not included in `dpdfnet-native`'s dependencies):
 
 ```bash
 pip install sounddevice
@@ -184,10 +186,10 @@ release the context and its thread before garbage collection would.
 
 ```python
 import sounddevice as sd
-import dpdfnet
+import dpdfnet_native
 
 # Construct and warm the model before starting the audio device.
-enhancer = dpdfnet.StreamEnhancer(model="dpdfnet8_48khz_hr")
+enhancer = dpdfnet_native.StreamEnhancer(model="dpdfnet8_48khz_hr")
 INPUT_SR = enhancer.sample_rate  # 48000
 BLOCK_SIZE = enhancer.hop_size   # 480 samples, or 10 ms
 
@@ -244,12 +246,13 @@ for latency and quality measurements. Contributor test instructions are in
 
 ### Library location
 
-Wheels load the library bundled in `dpdfnet/_native`. An editable install
+Wheels load the library bundled in `dpdfnet_native/_native`. An editable install
 from a checkout uses `optimized_inference/build`. Set `DPDFNET_NATIVE_LIBRARY`
 to the path of a `libdpdfnet.so` or `libdpdfnet.dll` to use another build of
 the same version.
 
 ## Links
 
-- Homepage: https://github.com/ceva-ip/DPDFNet
-- Issues: https://github.com/ceva-ip/DPDFNet/issues
+- Homepage: https://github.com/perennialtech/DPDFNet
+- Issues: https://github.com/perennialtech/DPDFNet/issues
+- Upstream (models, paper, Ceva's `dpdfnet`): https://github.com/ceva-ip/DPDFNet

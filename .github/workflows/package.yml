@@ -96,4 +96,4 @@ jobs:
           DPDFNET_TEST_INSTALLED: '1'
         run: |
           python -m pytest -q package/tests
-          dpdfnet models
+          dpdfnet-native models

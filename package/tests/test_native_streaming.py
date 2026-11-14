@@ -11,9 +11,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dpdfnet import StreamEnhancer, enhance
-from dpdfnet.models import find_native_library, supported_models, weights_path
-from dpdfnet.native_backend import NativeFrameRunner
+from dpdfnet_native import StreamEnhancer, enhance
+from dpdfnet_native.models import find_native_library, supported_models, weights_path
+from dpdfnet_native.native_backend import NativeFrameRunner
 from synthetic import SAMPLE_RATE, agreement_db, noisy_vowel
 
 
@@ -149,10 +149,10 @@ def test_offline_enhance_resamples_and_keeps_length():
     reason="Checks an installed wheel (set DPDFNET_TEST_INSTALLED)",
 )
 def test_installed_wheel_uses_its_bundled_files(monkeypatch):
-    import dpdfnet
+    import dpdfnet_native
 
     monkeypatch.delenv("DPDFNET_NATIVE_LIBRARY", raising=False)
-    bundled = Path(dpdfnet.__file__).resolve().parent / "_native"
+    bundled = Path(dpdfnet_native.__file__).resolve().parent / "_native"
     assert find_native_library().parent == bundled
     for model in supported_models():
         assert weights_path(model) == bundled / f"{model}.f32"

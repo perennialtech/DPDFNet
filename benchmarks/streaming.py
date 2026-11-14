@@ -79,9 +79,9 @@ def main() -> None:
     if args.cpu is not None:
         os.sched_setaffinity(0, args.cpu)
 
-    from dpdfnet import StreamEnhancer
-    from dpdfnet.audio import ensure_sample_rate, to_mono
-    from dpdfnet.models import get_model_info, native_library_path, weights_path
+    from dpdfnet_native import StreamEnhancer
+    from dpdfnet_native.audio import ensure_sample_rate, to_mono
+    from dpdfnet_native.models import get_model_info, native_library_path, weights_path
 
     sr = get_model_info(args.model).sample_rate
     hop = sr // 100
@@ -135,7 +135,7 @@ def main() -> None:
 
     cpu_ms = (time.process_time_ns() - cpu_start) / 1e6
     measured = timings[args.warmup_frames :]
-    packages = {"numpy": version("numpy"), "dpdfnet": version("dpdfnet")}
+    packages = {"numpy": version("numpy"), "dpdfnet": version("dpdfnet-native")}
     library = native_library_path()
     report = {
         "model": args.model,

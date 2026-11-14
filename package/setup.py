@@ -2,7 +2,7 @@
 
 A wheel build runs ``optimized_inference/tools/build.py`` (the PGO release
 build and all of its contracts) and copies the library and both checksummed
-weight files into ``dpdfnet/_native``. Set ``DPDFNET_NATIVE_BUILD_DIR`` to a
+weight files into ``dpdfnet_native/_native``. Set ``DPDFNET_NATIVE_BUILD_DIR`` to a
 directory holding an already built library to skip that step, as CI does
 after building in MSYS2 on Windows.
 
@@ -24,6 +24,7 @@ import sys
 from setuptools import setup
 from setuptools.command.bdist_wheel import bdist_wheel
 from setuptools.command.build_py import build_py
+from setuptools.command.sdist import sdist
 from setuptools.dist import Distribution
 
 HERE = Path(__file__).resolve().parent
@@ -64,14 +65,14 @@ class build_py_with_native(build_py):
             return
         if not (NATIVE_SOURCE / "CMakeLists.txt").is_file():
             raise SystemExit(
-                "dpdfnet bundles a native library built from the repository's "
+                "dpdfnet-native bundles a native library built from the repository's "
                 "optimized_inference directory, which this source tree (an sdist?) "
                 "lacks. Build the wheel directly from a repository checkout: "
                 "pip install ./package, pip wheel ./package or python -m build --wheel package."
             )
         library = self._native_library()
         _check_weights(library)
-        target = Path(self.build_lib) / "dpdfnet" / "_native"
+        target = Path(self.build_lib) / "dpdfnet_native" / "_native"
         target.mkdir(parents=True, exist_ok=True)
         shutil.copy2(library, target / LIBRARY)
         for model in MODELS:
@@ -100,6 +101,21 @@ class build_py_with_native(build_py):
         return build_dir / LIBRARY
 
 
+class no_sdist(sdist):
+    """Releases are wheels only.
+
+    A source distribution cannot build: it would lack optimized_inference.
+    On a platform without a wheel, pip would try it and fail to compile,
+    instead of reporting that no distribution matches.
+    """
+
+    def run(self) -> None:
+        raise SystemExit(
+            "dpdfnet-native is released as wheels only; build one with "
+            "pip wheel ./package or python -m build --wheel package."
+        )
+
+
 class BinaryDistribution(Distribution):
     """Platform-specific: the wheel carries a native library."""
 
@@ -115,5 +131,5 @@ class platform_wheel(bdist_wheel):
 
 setup(
     distclass=BinaryDistribution,
-    cmdclass={"build_py": build_py_with_native, "bdist_wheel": platform_wheel},
+    cmdclass={"build_py": build_py_with_native, "bdist_wheel": platform_wheel, "sdist": no_sdist},
 )

@@ -25,7 +25,8 @@ tests in `test_native_streaming.py` use the real library. They check chunk
 invariance, reset, two-thread versus single-thread equality, weight checksums,
 and output against the original FP32 ONNX model: `package/tests/data/onnx_reference.npz`
 holds that model's output on a synthetic signal, made once by
-`make_onnx_reference.py` with `dpdfnet` 0.x. Native output must agree with it
+`make_onnx_reference.py` with Ceva's `dpdfnet` 0.6 (the ONNX Runtime package,
+which installs alongside this one). Native output must agree with it
 to at least 20 dB.
 
 To test a wheel as users get it, build and install it, then run the tests
@@ -64,3 +65,11 @@ QT_QPA_PLATFORM=offscreen uv run --no-project python -m pytest tests/test_real_t
 This exercises the 48 kHz, 480-sample callbacks, with and without the helper
 thread, using a mock audio device and no GUI event loop. It does not test a
 physical device's driver, playback quality, or hardware latency.
+
+## Releasing
+
+Releases are wheels only: upload the `wheel-linux` and `wheel-windows`
+artifacts from the `Package` workflow, and never an sdist. `setup.py`
+refuses to build one, since it could not compile without
+`optimized_inference/`, and on platforms without a wheel pip should report
+that nothing matches rather than attempt a build.

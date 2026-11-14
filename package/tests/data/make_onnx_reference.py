@@ -1,9 +1,10 @@
 """Regenerate onnx_reference.npz from the FP32 ONNX models.
 
-This needs dpdfnet 0.x, the last release with the ONNX Runtime backend, and
-the two 48 kHz ONNX exports (from Hugging Face, Ceva-IP/DPDFNet, onnx/):
+This needs Ceva's `dpdfnet` package (made with 0.6.0), which runs the FP32
+ONNX models on ONNX Runtime and installs alongside `dpdfnet-native`, and the
+two 48 kHz ONNX exports (from Hugging Face, Ceva-IP/DPDFNet, onnx/):
 
-    pip install 'dpdfnet<1'
+    pip install 'dpdfnet==0.6.0'
     python make_onnx_reference.py path/to/onnx/dir
 
 The fixture is the independent oracle for the native runtime: the native

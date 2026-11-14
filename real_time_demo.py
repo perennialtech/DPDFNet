@@ -6,8 +6,8 @@ import numpy as np
 import pyqtgraph as pg
 import sounddevice as sd
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
-from dpdfnet import StreamEnhancer
-from dpdfnet.models import find_native_library, supported_models
+from dpdfnet_native import StreamEnhancer
+from dpdfnet_native.models import find_native_library, supported_models
 
 # =======================
 # CONFIG (GLOBAL STYLE)

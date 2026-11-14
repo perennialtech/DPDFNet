@@ -12,7 +12,7 @@ def test_hr_demo_without_audio_device(monkeypatch, single_thread):
     pytest.importorskip("sounddevice")
     root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(root / "package" / "src"))
-    from dpdfnet.models import find_native_library
+    from dpdfnet_native.models import find_native_library
 
     if find_native_library() is None:
         pytest.skip("Build optimized_inference (or set DPDFNET_NATIVE_LIBRARY) to run the GUI smoke test")

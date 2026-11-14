@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/dpdfnet/"><img src="https://img.shields.io/pypi/v/dpdfnet?label=PyPI&style=for-the-badge" alt="PyPI version"></a>&nbsp;
+  <a href="https://pypi.org/project/dpdfnet-native/"><img src="https://img.shields.io/pypi/v/dpdfnet-native?label=PyPI&style=for-the-badge" alt="PyPI version"></a>&nbsp;
   <a href="https://arxiv.org/abs/2512.16420"><img src="https://img.shields.io/badge/arXiv-2512.16420-b31b1b?style=for-the-badge" alt="arXiv paper"></a>&nbsp;
   <a href="https://huggingface.co/Ceva-IP/DPDFNet"><img src="https://img.shields.io/badge/Hugging%20Face-Models-FFD21E?style=for-the-badge" alt="Hugging Face models"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge" alt="Apache 2.0 license"></a>
@@ -57,12 +57,14 @@
 
 ### Inference in this repository
 
-The `dpdfnet` package runs `dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` on the
+This repository is an independent fork of
+[Ceva-IP/DPDFNet](https://github.com/ceva-ip/DPDFNet). Its `dpdfnet-native`
+package (imported as `dpdfnet_native`) runs `dpdfnet2_48khz_hr` and `dpdfnet8_48khz_hr` on the
 [optimized C runtime](optimized_inference/README.md): W7A8 integer kernels with
 FP32 recurrent state, hand-written AVX2/FMA (and AVX-VNNI) assembly, and the
 calling thread plus one helper thread, which cuts per-hop latency by 25–45% at
 identical output. On the tested CPUs a hop takes 5–7× less time than the
-original FP32 ONNX model under ONNX Runtime, which the package no longer uses.
+original FP32 ONNX model under ONNX Runtime, which the package does not use.
 See [performance and output quality](optimized_inference/docs/PERFORMANCE.md)
 for measurements and their scope; the 50 ms algorithmic delay is unchanged.
 
@@ -70,15 +72,15 @@ It runs on Linux and Windows 10 1607+ on x86-64 CPUs with AVX2 and FMA. The 8
 and 16 kHz models above are not part of the package: their PyTorch
 checkpoints and ONNX/TFLite exports stay on
 [Hugging Face](https://huggingface.co/Ceva-IP/DPDFNet) for research use, and
-`dpdfnet` 0.x on PyPI is the last release that ran them.
+Ceva's own [`dpdfnet`](https://pypi.org/project/dpdfnet/) package runs them on
+ONNX Runtime.
 
 ## Install the Package
 
 Wheels for Linux (glibc 2.27+) and Windows x86-64 bundle the library and
 both models' weights, so nothing is downloaded at run time. The repository's
-`Package` workflow builds and tests them. Once 1.0 is on PyPI, install it with
-`pip install "dpdfnet>=1"`; without the `>=1`, unsupported platforms silently
-get the 0.x ONNX release, whose API differs. To build a wheel from a checkout, with
+`Package` workflow builds and tests them; releases are wheels only. Once
+published, install it with `pip install dpdfnet-native`. To build a wheel from a checkout, with
 GCC 12+ and CMake 3.18+ (MSYS2 UCRT64 GCC on Windows, see
 [BUILD.md](optimized_inference/docs/BUILD.md)):
 
@@ -93,16 +95,16 @@ runtime's contract tests before packaging, which takes a few minutes.
 
 ```bash
 # Enhance one file (default model: dpdfnet2_48khz_hr)
-dpdfnet enhance noisy.wav enhanced.wav --model dpdfnet8_48khz_hr --attn-limit-db 12
+dpdfnet-native enhance noisy.wav enhanced.wav --model dpdfnet8_48khz_hr --attn-limit-db 12
 
 # Enhance a directory (uses all CPU cores by default)
-dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --attn-limit-db 12
+dpdfnet-native enhance-dir ./noisy_wavs ./enhanced_wavs --attn-limit-db 12
 
 # Enhance a directory with a fixed worker count
-dpdfnet enhance-dir ./noisy_wavs ./enhanced_wavs --workers 4 --attn-limit-db 12
+dpdfnet-native enhance-dir ./noisy_wavs ./enhanced_wavs --workers 4 --attn-limit-db 12
 
 # List the models and where the native library was found
-dpdfnet models
+dpdfnet-native models
 ```
 
 Input at any sample rate is resampled to 48 kHz for the model and back.
@@ -111,19 +113,19 @@ Input at any sample rate is resampled to 48 kHz for the model and back.
 
 ```python
 import soundfile as sf
-import dpdfnet
+import dpdfnet_native
 
 # In-memory enhancement:
 audio, sr = sf.read("noisy.wav")
-enhanced = dpdfnet.enhance(audio, sample_rate=sr, model="dpdfnet8_48khz_hr", attn_limit_db=12)
+enhanced = dpdfnet_native.enhance(audio, sample_rate=sr, model="dpdfnet8_48khz_hr", attn_limit_db=12)
 sf.write("enhanced.wav", enhanced, sr)
 
 # Enhance one file:
-out_path = dpdfnet.enhance_file("noisy.wav", attn_limit_db=12)
+out_path = dpdfnet_native.enhance_file("noisy.wav", attn_limit_db=12)
 print(out_path)
 
 # Model listing:
-for row in dpdfnet.available_models():
+for row in dpdfnet_native.available_models():
     print(row["name"], row["ready"])
 ```
 
@@ -132,10 +134,10 @@ for row in dpdfnet.available_models():
 Use 48 kHz audio and 480-sample (10 ms) chunks:
 
 ```python
-import dpdfnet
+import dpdfnet_native
 
 # Construct outside the audio callback; construction includes warmup.
-enhancer = dpdfnet.StreamEnhancer(model="dpdfnet8_48khz_hr")
+enhancer = dpdfnet_native.StreamEnhancer(model="dpdfnet8_48khz_hr")
 # In your callback, with a mono float32 input block:
 # enhanced = enhancer.process(input_block, sample_rate=enhancer.sample_rate)
 ```
@@ -250,7 +252,7 @@ the audio callback.
 - If you built the library elsewhere, point `DPDFNET_NATIVE_LIBRARY` at it.
 
 #### `Q: "needs an x86-64 CPU with AVX2 and FMA"`
-- The runtime has no fallback for older x86 CPUs, ARM or macOS. Use `dpdfnet` 0.x (ONNX Runtime) there.
+- The runtime has no fallback for older x86 CPUs, ARM or macOS. Ceva's ONNX Runtime package, [`dpdfnet`](https://pypi.org/project/dpdfnet/), runs there.
 
 #### `Q: Real-time demo has audio device errors`
 - Check microphone permissions and default input/output device settings.
