@@ -33,11 +33,22 @@ enum { IDLE, POSTED, RUNNING, DONE };
  * of the next expected hop and spins until it starts, or until WINDOW plus
  * twice the hop jitter (at most MAX_LEAD) after it. The lead covers the
  * timer's observed lateness, twice the hop jitter and MARGIN, within
- * [MIN_LEAD,MAX_LEAD], so one pre-wake spins for at most 800 us. Cadences
- * outside [MIN_PERIOD,MAX_PERIOD] or with jitter above an eighth of the
- * period are not predicted. */
+ * [MIN_LEAD,MAX_LEAD], so one pre-wake spins for at most 800 us (1.3 ms on
+ * Windows, see TICK). Cadences outside [MIN_PERIOD,MAX_PERIOD] or with jitter
+ * above an eighth of the period are not predicted. */
 static const int64_t MARGIN=30000,MIN_LEAD=40000,MAX_LEAD=300000,WINDOW=200000,
                      MIN_PERIOD=100000,MAX_PERIOD=100000000;
+/* Windows expires timers, high-resolution ones included, on clock interrupts,
+ * which come at most every 0.5 ms, so a timer fires up to TICK late. With a
+ * hop cadence near a multiple of the tick, that lateness repeats hop after
+ * hop, and where it exceeds MAX_LEAD no pre-wake ever lands. The helper
+ * therefore sets its timer one tick early, so that a tick falls before the
+ * lead, and spins the rest. */
+#ifdef _WIN32
+static const int64_t TICK=500000;
+#else
+static const int64_t TICK=0;
+#endif
 /* Back-off. A hop loses when the caller waited for a task longer than the
  * task usually takes to run (the helper was preempted holding it): that adds
  * SLOW to a score. A hop where the helper started no task, so the caller ran
@@ -165,11 +176,14 @@ static void helper_idle(dpdf_worker *w,int64_t *late,int64_t *spread) {
         const int64_t jitter2=atomic_load_explicit(&w->jitter2,memory_order_relaxed),close=next+WINDOW+jitter2;
         int64_t lead=*late+2**spread+jitter2+MARGIN;
         lead=lead<MIN_LEAD ? MIN_LEAD : lead>MAX_LEAD ? MAX_LEAD : lead;
-        if (next && now<next-lead) {
-            helper_sleep(w,next-lead-now,0);
+        const int64_t due=next-lead-TICK;
+        if (next && now<due) {
+            helper_sleep(w,due-now,0);
+            /* A wake before due was not the timer. One within the tick before
+             * the lead is on time; only later ones count as late. */
             const int64_t woke=now_ns(),error=woke-(next-lead);
-            if (error>=0 && waiting(w) && !atomic_load_explicit(&w->active,memory_order_relaxed)) {
-                const int64_t miss=error-*late;
+            if (woke>=due && waiting(w) && !atomic_load_explicit(&w->active,memory_order_relaxed)) {
+                const int64_t miss=(error>0 ? error : 0)-*late;
                 *late+=miss/8; *spread+=((miss<0 ? -miss : miss)-*spread)/8;
             }
         }
