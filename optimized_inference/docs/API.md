@@ -93,7 +93,9 @@ the call returns after both branches finish.
   before the next expected hop (on Windows, through a high-resolution waitable
   timer) and spins until it starts, so its core is
   already awake. That spin is most of the extra CPU time, and lasts at most
-  about 0.8 ms per hop. Within a hop the
+  about 0.8 ms per hop. Windows fires timers only on clock ticks up to 0.5 ms
+  apart, so there the helper wakes a tick earlier and the spin lasts up to
+  about 1.3 ms. Within a hop the
   two threads spin while waiting for each other, and sleep only after about
   1 ms. Spinning threads yield every 20 µs or so, so a spinning thread never
   holds a shared CPU its partner needs.
