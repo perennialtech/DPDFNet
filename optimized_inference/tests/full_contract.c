@@ -50,9 +50,56 @@ static int worker_paths(void) {
     return 0;
 }
 
+static int slow_task(void *p) {
+    probe *q=p;
+    q->thread=&thread_tag;
+    busy(1u<<24); /* Past the caller's spin budget (SPIN, 1<<22 ticks). */
+    return 5;
+}
+/* The kernel waits: a caller that outwaits its spin budget sleeps until the
+ * helper's wake, and at a steady cadence the helper's timed pre-wake has it
+ * spinning when the next hop starts, so it claims a task posted just before
+ * the caller joins. A sleeping helper could not wake within that window.
+ * Destroy then stops a helper waiting for the next predicted hop. A lost
+ * wake-up hangs, which the test timeout reports. */
+static int worker_waits(void) {
+    dpdf_worker *w=dpdf_worker_create(); CHECK(w);
+    const unsigned original=_mm_getcsr();
+    int slow=0;
+    for (int i=0;i<50 && slow<3;++i) {
+        probe q={0};
+        if (!dpdf_worker_begin(w)) continue; /* Backing off: no post or end. */
+        dpdf_worker_post(w,slow_task,&q);
+        busy(1u<<20); /* The spinning helper claims it meanwhile. */
+        dpdf_worker_end(w);
+        CHECK(dpdf_worker_join(w)==5);
+        slow+=q.thread!=&thread_tag;
+    }
+    CHECK(slow==3);
+    /* A fresh worker, so the slow hops' back-off score cannot pause this run. */
+    dpdf_worker_destroy(w);
+    w=dpdf_worker_create(); CHECK(w);
+    int prewoken=0;
+    for (int hop=0;hop<60;++hop) {
+        busy(1u<<23); /* A steady cadence of a few milliseconds. */
+        probe q={0};
+        if (!dpdf_worker_begin(w)) continue;
+        dpdf_worker_post(w,overflow_task,&q);
+        busy(1u<<10); /* About 250 ns: too short for a kernel wake-up. */
+        dpdf_worker_end(w);
+        CHECK(dpdf_worker_join(w)==7);
+        prewoken+=q.thread!=&thread_tag;
+    }
+    dpdf_worker_destroy(w);
+    _mm_setcsr(original);
+    CHECK(prewoken>0);
+    return 0;
+}
+
 int main(int argc,char **argv) {
     CHECK(argc==2);
     CHECK(worker_paths()==0);
+    CHECK(worker_waits()==0);
     size_t n=dpdf_model_weight_count();
     size_t state_size=dpdf_model_state_size(); CHECK(state_size>0);
     float *weights=malloc(n*sizeof(float));
