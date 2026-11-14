@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Failed line %d: %s\n",__LINE__,#x); return 1; } } while (0)
 
 /* A task that records where it ran and raises overflow, a flag nothing else
@@ -20,6 +21,15 @@ static int overflow_task(void *p) {
     return 7;
 }
 static void busy(uint64_t ticks) { const uint64_t t=__rdtsc(); while (__rdtsc()-t<ticks) _mm_pause(); }
+/* TSC ticks per microsecond, measured over 10 ms. */
+static uint64_t ticks_per_us(void) {
+    struct timespec a,b;
+    timespec_get(&a,TIME_UTC);
+    const uint64_t t=__rdtsc();
+    long long ns;
+    do { timespec_get(&b,TIME_UTC); ns=(b.tv_sec-a.tv_sec)*1000000000LL+(b.tv_nsec-a.tv_nsec); } while (ns<10000000);
+    return (__rdtsc()-t)*1000/(uint64_t)ns;
+}
 /* Both ways a task can run: taken over by the caller (helper asleep) and run
  * by the helper (the caller waits past its claim). Each must return the
  * task's status, run under the caller's MXCSR controls and leave the task's
@@ -58,10 +68,11 @@ static int slow_task(void *p) {
 }
 /* The kernel waits: a caller that outwaits its spin budget sleeps until the
  * helper's wake, and at a steady cadence the helper's timed pre-wake has it
- * spinning when the next hop starts, so it claims a task posted just before
- * the caller joins. A sleeping helper could not wake within that window.
- * Destroy then stops a helper waiting for the next predicted hop. A lost
- * wake-up hangs, which the test timeout reports. */
+ * spinning when the next hop starts, so it claims tasks posted just before
+ * the caller joins. A sleeping helper woken by begin only rarely makes it
+ * within that window, so the check asks for two such hops. Destroy then
+ * stops a helper waiting for the next predicted hop. A lost wake-up hangs,
+ * which the test timeout reports. */
 static int worker_waits(void) {
     dpdf_worker *w=dpdf_worker_create(); CHECK(w);
     const unsigned original=_mm_getcsr();
@@ -79,20 +90,29 @@ static int worker_waits(void) {
     /* A fresh worker, so the slow hops' back-off score cannot pause this run. */
     dpdf_worker_destroy(w);
     w=dpdf_worker_create(); CHECK(w);
+    /* The window between post and join, set in time since the TSC rate
+     * differs by machine: 250 ns, too short for a kernel wake-up. Under
+     * ThreadSanitizer the spinning helper takes about 1 us to claim a task. */
+#ifdef __SANITIZE_THREAD__
+    const uint64_t window=ticks_per_us();
+#else
+    const uint64_t window=ticks_per_us()/4;
+#endif
+    CHECK(window>0);
     int prewoken=0;
     for (int hop=0;hop<60;++hop) {
         busy(1u<<23); /* A steady cadence of a few milliseconds. */
         probe q={0};
         if (!dpdf_worker_begin(w)) continue;
         dpdf_worker_post(w,overflow_task,&q);
-        busy(1u<<10); /* About 250 ns: too short for a kernel wake-up. */
+        busy(window);
         dpdf_worker_end(w);
         CHECK(dpdf_worker_join(w)==7);
         prewoken+=q.thread!=&thread_tag;
     }
     dpdf_worker_destroy(w);
     _mm_setcsr(original);
-    CHECK(prewoken>0);
+    CHECK(prewoken>=2);
     return 0;
 }
 
