@@ -4,48 +4,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
-from .models import (
-    DEFAULT_MODEL,
-    available_model_entries,
-    download_model,
-    download_models,
-    resolve_model,
-)
+
+from . import native_backend
+from .models import DEFAULT_MODEL, available_model_entries
 
 
-def available_models(
-) -> List[Dict[str, Any]]:
+def available_models() -> List[Dict[str, Any]]:
     return available_model_entries()
-
-
-def download(
-    model: Optional[str] = None,
-    *,
-    force: bool = False,
-    quiet: bool = False,
-    verbose: bool = False,
-) -> Union[Path, Dict[str, Path]]:
-    if quiet and verbose:
-        raise ValueError("quiet=True and verbose=True are mutually exclusive.")
-
-    notifier = (lambda _message: None) if quiet else None
-
-    if model is None:
-        resolved_all = download_models(
-            models=None,
-            force=force,
-            verbose=verbose,
-            notifier=notifier,
-        )
-        return {item.info.name: item.onnx_path.parent for item in resolved_all}
-
-    resolved = download_model(
-        model=model,
-        force=force,
-        verbose=verbose,
-        notifier=notifier,
-    )
-    return resolved.onnx_path.parent
 
 
 def enhance(
@@ -53,11 +18,32 @@ def enhance(
     sample_rate: int,
     *,
     model: str = DEFAULT_MODEL,
-    onnx_path: Optional[Union[str, Path]] = None,
     attn_limit_db: Optional[float] = None,
-    verbose: bool = False,
+    single_thread: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> np.ndarray:
+    with native_backend.NativeFrameRunner(model, single_thread=single_thread) as runner:
+        return _enhance_with_runner(
+            audio,
+            sample_rate,
+            runner=runner,
+            attn_limit_db=attn_limit_db,
+            progress_callback=progress_callback,
+        )
+
+
+def _enhance_with_runner(
+    audio: np.ndarray,
+    sample_rate: int,
+    *,
+    runner,
+    attn_limit_db: Optional[float] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> np.ndarray:
+    """Offline enhancement of one recording on an existing frame runner.
+
+    The runner's state is reset first, so one runner can serve many files.
+    """
     from .audio import (
         apply_attn_limit,
         ensure_sample_rate,
@@ -67,118 +53,46 @@ def enhance(
         preprocess_waveform,
         to_mono,
     )
-    from .onnx_backend import build_runtime_model, infer_win_len
 
     waveform = to_mono(np.asarray(audio, dtype=np.float32))
     sr_in = int(sample_rate)
+    model_sr = runner.sample_rate
 
-    resolved = resolve_model(
-        model=model,
-        onnx_path=onnx_path,
-        auto_download=True,
-        verbose=verbose,
-    )
-    runtime = build_runtime_model(resolved.onnx_path)
-
-    waveform_model_sr = ensure_sample_rate(waveform, sr_in, resolved.info.sample_rate)
-    win_len = infer_win_len(runtime.session, resolved.info.sample_rate)
-    cfg = make_stft_config(win_len)
+    waveform_model_sr = ensure_sample_rate(waveform, sr_in, model_sr)
+    cfg = make_stft_config(runner.win_len)
 
     # Keep alignment behavior from the original scripts.
     waveform_padded = np.pad(waveform_model_sr, (0, cfg.win_len), mode="constant")
     spec_r = preprocess_waveform(waveform_padded, cfg)
 
-    state = runtime.init_state.copy()
-    frames: list[np.ndarray] = []
+    runner.reset()
     total_frames = int(spec_r.shape[1])
     if progress_callback is not None:
         progress_callback(0, total_frames)
+    if total_frames == 0:
+        return waveform.copy()
+    spec_e = np.empty_like(spec_r)
     for t in range(total_frames):
-        spec_t = np.ascontiguousarray(spec_r[:, t : t + 1, :, :], dtype=np.float32)
-        spec_e_t, state = runtime.session.run(
-            [runtime.out_spec_name, runtime.out_state_name],
-            {runtime.in_spec_name: spec_t, runtime.in_state_name: state},
-        )
-        frames.append(np.ascontiguousarray(spec_e_t, dtype=np.float32))
+        runner.spec[0, 0] = spec_r[0, t]
+        spec_e[0, t] = runner.run()[0, 0]
         if progress_callback is not None:
             progress_callback(t + 1, total_frames)
 
-    if not frames:
-        return waveform.copy()
-
-    spec_e = np.concatenate(frames, axis=1)
     spec_e = apply_attn_limit(spec_r, spec_e, attn_limit_db)
     enhanced_model_sr = postprocess_spec(spec_e, cfg)
-    enhanced = ensure_sample_rate(enhanced_model_sr, resolved.info.sample_rate, sr_in)
+    enhanced = ensure_sample_rate(enhanced_model_sr, model_sr, sr_in)
     return fit_length(enhanced, waveform.shape[0]).astype(np.float32, copy=False)
 
 
-def _enhance_with_runtime(
-    audio: np.ndarray,
-    sample_rate: int,
-    *,
-    runtime,
-    model_sample_rate: int,
-    attn_limit_db: Optional[float] = None,
-    progress_callback: Optional[Callable[[int, int], None]] = None,
-) -> np.ndarray:
-    """Like `enhance()` but skips model resolution/loading; uses a pre-built RuntimeModel."""
-    from .audio import (
-        apply_attn_limit,
-        ensure_sample_rate,
-        fit_length,
-        make_stft_config,
-        postprocess_spec,
-        preprocess_waveform,
-        to_mono,
-    )
-    from .onnx_backend import infer_win_len
-
-    waveform = to_mono(np.asarray(audio, dtype=np.float32))
-    sr_in = int(sample_rate)
-
-    waveform_model_sr = ensure_sample_rate(waveform, sr_in, model_sample_rate)
-    win_len = infer_win_len(runtime.session, model_sample_rate)
-    cfg = make_stft_config(win_len)
-
-    waveform_padded = np.pad(waveform_model_sr, (0, cfg.win_len), mode="constant")
-    spec_r = preprocess_waveform(waveform_padded, cfg)
-
-    state = runtime.init_state.copy()
-    frames: list[np.ndarray] = []
-    total_frames = int(spec_r.shape[1])
-    if progress_callback is not None:
-        progress_callback(0, total_frames)
-    for t in range(total_frames):
-        spec_t = np.ascontiguousarray(spec_r[:, t : t + 1, :, :], dtype=np.float32)
-        spec_e_t, state = runtime.session.run(
-            [runtime.out_spec_name, runtime.out_state_name],
-            {runtime.in_spec_name: spec_t, runtime.in_state_name: state},
-        )
-        frames.append(np.ascontiguousarray(spec_e_t, dtype=np.float32))
-        if progress_callback is not None:
-            progress_callback(t + 1, total_frames)
-
-    if not frames:
-        return waveform.copy()
-
-    spec_e = np.concatenate(frames, axis=1)
-    spec_e = apply_attn_limit(spec_r, spec_e, attn_limit_db)
-    enhanced_model_sr = postprocess_spec(spec_e, cfg)
-    enhanced = ensure_sample_rate(enhanced_model_sr, model_sample_rate, sr_in)
-    return fit_length(enhanced, waveform.shape[0]).astype(np.float32, copy=False)
-
-
-def _enhance_file_with_runtime(
+def _enhance_file_with_runner(
     input_path: Union[str, Path],
     output_path: Union[str, Path],
     *,
-    runtime,
-    model_sample_rate: int,
+    runner,
     attn_limit_db: Optional[float] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> Path:
-    """Like `enhance_file()` but uses a pre-built RuntimeModel to skip model loading."""
+    """Like `enhance_file()` but reuses an existing frame runner."""
     import soundfile as sf
 
     from .audio import pcm16_safe
@@ -188,11 +102,10 @@ def _enhance_file_with_runtime(
         raise FileNotFoundError(f"Input file not found: {in_path}")
 
     audio, sr = _read_audio(in_path)
-    enhanced = _enhance_with_runtime(
+    enhanced = _enhance_with_runner(
         audio=audio,
         sample_rate=int(sr),
-        runtime=runtime,
-        model_sample_rate=model_sample_rate,
+        runner=runner,
         attn_limit_db=attn_limit_db,
         progress_callback=progress_callback,
     )
@@ -246,9 +159,8 @@ def enhance_file(
     output_path: Optional[Union[str, Path]] = None,
     *,
     model: str = DEFAULT_MODEL,
-    onnx_path: Optional[Union[str, Path]] = None,
     attn_limit_db: Optional[float] = None,
-    verbose: bool = False,
+    single_thread: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> Path:
     import soundfile as sf
@@ -264,9 +176,8 @@ def enhance_file(
         audio=audio,
         sample_rate=int(sr),
         model=model,
-        onnx_path=onnx_path,
         attn_limit_db=attn_limit_db,
-        verbose=verbose,
+        single_thread=single_thread,
         progress_callback=progress_callback,
     )
 

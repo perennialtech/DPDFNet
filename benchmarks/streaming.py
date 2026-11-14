@@ -45,17 +45,14 @@ def peak_rss_mib() -> float:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="dpdfnet8_48khz_hr")
-    parser.add_argument("--onnx-path", type=Path)
     parser.add_argument(
-        "--backend", choices=["onnx", "openvino", "native"], default="onnx"
+        "--model", default="dpdfnet8_48khz_hr",
+        choices=["dpdfnet2_48khz_hr", "dpdfnet8_48khz_hr"],
     )
-    parser.add_argument("--native-library", type=Path)
-    parser.add_argument("--native-weights", type=Path)
     parser.add_argument(
-        "--native-single-thread",
+        "--single-thread",
         action="store_true",
-        help="Run native inference on the calling thread only",
+        help="Run inference on the calling thread only",
     )
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--warmup-frames", type=int, default=100)
@@ -77,21 +74,14 @@ def main() -> None:
         "--save-output", type=Path, help="Save enhanced samples as a NumPy array"
     )
     args = parser.parse_args()
-    if args.backend == "native":
-        if not args.native_library or not args.native_weights or args.onnx_path:
-            parser.error("native needs --native-library and --native-weights, not --onnx-path")
-    elif not args.onnx_path or args.native_library or args.native_weights:
-        parser.error("onnx/openvino needs --onnx-path, not native paths")
-    if args.native_single_thread and args.backend != "native":
-        parser.error("--native-single-thread needs --backend native")
     if args.seconds <= 0 or args.warmup_frames < 0:
         parser.error("--seconds must be positive and --warmup-frames non-negative")
     if args.cpu is not None:
         os.sched_setaffinity(0, args.cpu)
 
-    from dpdfnet import StreamEnhancer
-    from dpdfnet.audio import ensure_sample_rate, to_mono
-    from dpdfnet.models import get_model_info
+    from dpdfnet_native import StreamEnhancer
+    from dpdfnet_native.audio import ensure_sample_rate, to_mono
+    from dpdfnet_native.models import get_model_info, native_library_path, weights_path
 
     sr = get_model_info(args.model).sample_rate
     hop = sr // 100
@@ -115,14 +105,7 @@ def main() -> None:
         parser.error("Audio must contain more hops than --warmup-frames plus one")
 
     start = time.perf_counter_ns()
-    kwargs = {"backend": args.backend} if args.backend != "onnx" else {}
-    if args.backend == "native":
-        kwargs.update(
-            native_library=args.native_library,
-            native_weights=args.native_weights,
-            native_single_thread=args.native_single_thread,
-        )
-    enhancer = StreamEnhancer(model=args.model, onnx_path=args.onnx_path, **kwargs)
+    enhancer = StreamEnhancer(args.model, single_thread=args.single_thread)
     setup_ms = (time.perf_counter_ns() - start) / 1e6
     timings = np.empty(blocks, dtype=np.float64)
     lateness = np.zeros(blocks, dtype=np.float64)
@@ -152,20 +135,14 @@ def main() -> None:
 
     cpu_ms = (time.process_time_ns() - cpu_start) / 1e6
     measured = timings[args.warmup_frames :]
-    packages = {"numpy": version("numpy")}
-    if args.backend != "native":
-        packages["onnxruntime"] = version("onnxruntime")
-    if args.backend == "openvino":
-        packages["openvino"] = version("openvino")
+    packages = {"numpy": version("numpy"), "dpdfnet": version("dpdfnet-native")}
+    library = native_library_path()
     report = {
         "model": args.model,
-        "model_sha256": hashlib.sha256(
-            (
-                args.native_weights if args.backend == "native" else args.onnx_path
-            ).read_bytes()
-        ).hexdigest(),
-        "backend": args.backend,
-        "native_single_thread": args.native_single_thread,
+        "model_sha256": hashlib.sha256(weights_path(args.model).read_bytes()).hexdigest(),
+        "library": str(library),
+        "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+        "single_thread": args.single_thread,
         "paced": args.paced,
         "sample_rate": sr,
         "hop_samples": hop,

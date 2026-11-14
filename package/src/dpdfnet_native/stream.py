@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional, Union
-from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
+from . import native_backend
 from .audio import ensure_sample_rate, make_stft_config, to_mono
-from .models import DEFAULT_MODEL, resolve_model
-from .onnx_backend import OnnxFrameRunner, build_runtime_model, infer_win_len
+from .models import DEFAULT_MODEL
 
 
 class StreamEnhancer:
@@ -23,73 +22,25 @@ class StreamEnhancer:
 
     .. note::
         This path uses a hand-rolled causal STFT / ISTFT and will **not**
-        produce bit-identical output to :func:`dpdfnet.enhance`, which uses
+        produce bit-identical output to :func:`dpdfnet_native.enhance`, which uses
         ``center=True`` reflection padding.  Both are algorithmically correct;
         the causal variant is necessary for real-time use.
 
     Args:
-        model: Model name (default: ``"dpdfnet2"``).
-        onnx_path: Optional path to a custom ONNX file; overrides *model*.
-        verbose: Print model resolution / download progress.
-        backend: ``"onnx"``, ``"openvino"``, or ``"native"``. Native uses the
-            separately built W7A8 C runtime for either 48 kHz HR model.
-            Construction warms inference and resets its state before accepting
-            audio. Construct the enhancer outside the audio callback.
-        native_library: Path to the built C shared library, for native inference.
-        native_weights: Path to the corresponding bundled native weights.
-        native_single_thread: Run native inference on the calling thread only.
-            By default the native context has one helper thread that runs the
-            model's two branches concurrently: output is identical and each
-            hop finishes sooner, for some extra CPU time.
+        model: ``"dpdfnet2_48khz_hr"`` (default) or ``"dpdfnet8_48khz_hr"``.
+        single_thread: Run inference on the calling thread only. By default
+            the context has one helper thread that runs the model's two
+            branches concurrently: output is identical and each hop finishes
+            sooner, for some extra CPU time.
+
+    Construction loads the native runtime, warms inference and resets its
+    state, so construct the enhancer outside the audio callback.
     """
 
-    def __init__(
-        self,
-        model: str = DEFAULT_MODEL,
-        onnx_path: Optional[Union[str, Path]] = None,
-        verbose: bool = False,
-        *,
-        backend: str = "onnx",
-        native_library: Optional[Union[str, Path]] = None,
-        native_weights: Optional[Union[str, Path]] = None,
-        native_single_thread: bool = False,
-    ) -> None:
-        if backend not in {"onnx", "openvino", "native"}:
-            raise ValueError("backend must be 'onnx', 'openvino', or 'native'.")
-        if backend == "native":
-            if onnx_path is not None:
-                raise ValueError("onnx_path cannot be used with the native backend")
-            if native_library is None or native_weights is None:
-                raise ValueError("native backend needs native_library and native_weights")
-            from .native_backend import NativeFrameRunner
-
-            self._runner = NativeFrameRunner(
-                model, Path(native_library), Path(native_weights),
-                single_thread=native_single_thread,
-            )
-            self._model_sr = self._runner.sample_rate
-            self._win_len = self._runner.win_len
-        else:
-            if native_library is not None or native_weights is not None:
-                raise ValueError("native_library/native_weights need backend='native'")
-            if native_single_thread:
-                raise ValueError("native_single_thread needs backend='native'")
-            resolved = resolve_model(
-                model=model,
-                onnx_path=onnx_path,
-                auto_download=True,
-                verbose=verbose,
-            )
-            self._model_sr = resolved.info.sample_rate
-            if backend == "onnx":
-                runtime = build_runtime_model(resolved.onnx_path)
-                self._win_len = infer_win_len(runtime.session, self._model_sr)
-                self._runner = OnnxFrameRunner(runtime, self._win_len)
-            else:
-                from .openvino_backend import OpenVINOFrameRunner
-
-                self._runner = OpenVINOFrameRunner(resolved.onnx_path)
-                self._win_len = self._runner.win_len
+    def __init__(self, model: str = DEFAULT_MODEL, *, single_thread: bool = False) -> None:
+        self._runner = native_backend.NativeFrameRunner(model, single_thread=single_thread)
+        self._model_sr = self._runner.sample_rate
+        self._win_len = self._runner.win_len
         cfg = make_stft_config(self._win_len)
         self._hop_size: int = cfg.hop_size
         self._window: np.ndarray = cfg.window
@@ -113,6 +64,13 @@ class StreamEnhancer:
     def hop_size(self) -> int:
         """Samples per model hop at :attr:`sample_rate` (10 ms)."""
         return self._hop_size
+
+    def close(self) -> None:
+        """Release the native context and its helper thread now.
+
+        Garbage collection does this too; afterwards the enhancer is unusable.
+        """
+        self._runner.close()
 
     def reset(self) -> None:
         """Reset RNN state and internal buffers.

@@ -3,108 +3,97 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from urllib.error import HTTPError
-from urllib.error import URLError
-
 import pytest
 
 
-def _fake_download_one(_url: str, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(b"ok")
+class _FakeRunner:
+    """A frame runner with the native interface and no native library.
+
+    It returns zeros, the input spectrum (``passthrough``), or successive
+    frames of ``outputs``.
+    """
+
+    def __init__(self, win_len=8, sample_rate=16000, passthrough=False, outputs=None):
+        self.win_len = win_len
+        self.hop_size = win_len // 2
+        self.sample_rate = sample_rate
+        self.spec = np.zeros((1, 1, win_len // 2 + 1, 2), dtype=np.float32)
+        self._output = np.empty_like(self.spec)
+        self.passthrough = passthrough
+        self.outputs = outputs
+        self.calls = 0
+        self.resets = 0
+        self.closed = False
+
+    def reset(self):
+        self.resets += 1
+
+    def run(self):
+        if self.outputs is not None:
+            self._output[...] = self.outputs[self.calls]
+        elif self.passthrough:
+            self._output[...] = self.spec
+        else:
+            self._output[...] = 0.0
+        self.calls += 1
+        return self._output
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+
+
+def _use_fake_runner(monkeypatch, **kwargs):
+    """Make every NativeFrameRunner a _FakeRunner; returns the ones created."""
+    from dpdfnet_native import native_backend
+
+    created = []
+
+    def _factory(model, *_args, single_thread=False, **_kw):
+        runner = _FakeRunner(**kwargs)
+        runner.model = model
+        runner.single_thread = single_thread
+        created.append(runner)
+        return runner
+
+    monkeypatch.setattr(native_backend, "NativeFrameRunner", _factory)
+    return created
 
 
 def test_import_surface() -> None:
-    import dpdfnet
+    import dpdfnet_native
 
-    assert hasattr(dpdfnet, "enhance")
-    assert hasattr(dpdfnet, "enhance_file")
-    assert hasattr(dpdfnet, "StreamEnhancer")
-    assert hasattr(dpdfnet, "available_models")
-    assert hasattr(dpdfnet, "download")
-
-
-def test_model_resolution_auto_download(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-
-    monkeypatch.setattr(models, "_download_one", _fake_download_one)
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-    model_name = models.supported_models()[0]
-
-    resolved = models.resolve_model(
-        model=model_name,
-        auto_download=True,
-        verbose=False,
-    )
-
-    assert resolved.info.name == model_name
-    assert resolved.onnx_path.is_file()
+    assert hasattr(dpdfnet_native, "enhance")
+    assert hasattr(dpdfnet_native, "enhance_file")
+    assert hasattr(dpdfnet_native, "StreamEnhancer")
+    assert hasattr(dpdfnet_native, "available_models")
+    assert not hasattr(dpdfnet_native, "download")
 
 
-def test_download_all_matches_registry(tmp_path, monkeypatch) -> None:
-    import dpdfnet
-    from dpdfnet import models
-
-    monkeypatch.setattr(models, "_download_one", _fake_download_one)
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-    downloaded = dpdfnet.download(quiet=True)
-
-    assert isinstance(downloaded, dict)
-    assert sorted(downloaded) == models.supported_models()
-
-    for model_name in models.supported_models():
-        info = models.MODEL_REGISTRY[model_name]
-        assert (tmp_path / info.onnx_filename).is_file()
-
-
-def test_cli_download_all_matches_registry(tmp_path, monkeypatch, capsys) -> None:
-    from dpdfnet import cli, models
-
-    monkeypatch.setattr(models, "_download_one", _fake_download_one)
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-    exit_code = cli.main(["download", "--quiet"])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    for model_name in models.supported_models():
-        assert f"- {model_name}:" in output
-
-
-def test_enhance_progress_callback_reports_frame_progress(monkeypatch) -> None:
-    from dpdfnet import api
-
-    class _FakeSession:
-        def run(self, _outputs, _inputs):
-            return np.zeros((1, 1, 3, 2), dtype=np.float32), np.zeros((1,), dtype=np.float32)
-
-    class _FakeRuntime:
-        session = _FakeSession()
-        init_state = np.zeros((1,), dtype=np.float32)
-        in_spec_name = "spec"
-        in_state_name = "state"
-        out_spec_name = "out_spec"
-        out_state_name = "out_state"
-
-    class _ResolvedInfo:
-        sample_rate = 16000
-
-    class _ResolvedModel:
-        info = _ResolvedInfo()
-        onnx_path = Path("fake.onnx")
-
-    monkeypatch.setattr(api, "resolve_model", lambda **_kwargs: _ResolvedModel())
-
-    import dpdfnet.audio as audio_mod
-    import dpdfnet.onnx_backend as backend_mod
+def _patch_offline_audio(monkeypatch, spec_r, postprocess=None):
+    import dpdfnet_native.audio as audio_mod
 
     monkeypatch.setattr(audio_mod, "to_mono", lambda x: np.asarray(x, dtype=np.float32))
     monkeypatch.setattr(audio_mod, "ensure_sample_rate", lambda x, _a, _b: np.asarray(x, dtype=np.float32))
     monkeypatch.setattr(audio_mod, "make_stft_config", lambda _win: type("Cfg", (), {"win_len": 4})())
-    monkeypatch.setattr(audio_mod, "preprocess_waveform", lambda _w, _cfg: np.zeros((1, 4, 3, 2), dtype=np.float32))
-    monkeypatch.setattr(audio_mod, "postprocess_spec", lambda _spec, _cfg: np.zeros((8,), dtype=np.float32))
+    monkeypatch.setattr(audio_mod, "preprocess_waveform", lambda _w, _cfg: spec_r.copy())
+    monkeypatch.setattr(
+        audio_mod, "postprocess_spec",
+        postprocess or (lambda _spec, _cfg: np.zeros((8,), dtype=np.float32)),
+    )
     monkeypatch.setattr(audio_mod, "fit_length", lambda x, _n: np.asarray(x, dtype=np.float32))
-    monkeypatch.setattr(backend_mod, "build_runtime_model", lambda _onnx: _FakeRuntime())
-    monkeypatch.setattr(backend_mod, "infer_win_len", lambda _session, _sr: 4)
+
+
+def test_enhance_progress_callback_reports_frame_progress(monkeypatch) -> None:
+    from dpdfnet_native import api
+
+    created = _use_fake_runner(monkeypatch, win_len=4)
+    _patch_offline_audio(monkeypatch, np.zeros((1, 4, 3, 2), dtype=np.float32))
 
     updates = []
     api.enhance(
@@ -116,57 +105,23 @@ def test_enhance_progress_callback_reports_frame_progress(monkeypatch) -> None:
     assert updates[0] == (0, 4)
     assert updates[-1] == (4, 4)
     assert len(updates) == 5
+    assert created[0].model == "dpdfnet2_48khz_hr"
+    assert created[0].closed
 
 
 def test_enhance_applies_attn_limit_before_postprocess(monkeypatch) -> None:
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     spec_r = np.arange(1, 1 + (1 * 4 * 3 * 2), dtype=np.float32).reshape(1, 4, 3, 2)
-    spec_e_frames = np.full((4, 1, 3, 2), 77.0, dtype=np.float32)
+    outputs = np.full((4, 1, 1, 3, 2), 77.0, dtype=np.float32)
     captured: dict[str, np.ndarray] = {}
-
-    class _FakeSession:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def run(self, _outputs, _inputs):
-            frame = spec_e_frames[self.calls : self.calls + 1]
-            self.calls += 1
-            return frame.copy(), np.zeros((1,), dtype=np.float32)
-
-    class _FakeRuntime:
-        session = _FakeSession()
-        init_state = np.zeros((1,), dtype=np.float32)
-        in_spec_name = "spec"
-        in_state_name = "state"
-        out_spec_name = "out_spec"
-        out_state_name = "out_state"
-
-    class _ResolvedInfo:
-        sample_rate = 16000
-
-    class _ResolvedModel:
-        info = _ResolvedInfo()
-        onnx_path = Path("fake.onnx")
-
-    monkeypatch.setattr(api, "resolve_model", lambda **_kwargs: _ResolvedModel())
-
-    import dpdfnet.audio as audio_mod
-    import dpdfnet.onnx_backend as backend_mod
-
-    monkeypatch.setattr(audio_mod, "to_mono", lambda x: np.asarray(x, dtype=np.float32))
-    monkeypatch.setattr(audio_mod, "ensure_sample_rate", lambda x, _a, _b: np.asarray(x, dtype=np.float32))
-    monkeypatch.setattr(audio_mod, "make_stft_config", lambda _win: type("Cfg", (), {"win_len": 4})())
-    monkeypatch.setattr(audio_mod, "preprocess_waveform", lambda _w, _cfg: spec_r.copy())
 
     def _capture_postprocess(spec, _cfg):
         captured["spec"] = np.asarray(spec, dtype=np.float32).copy()
         return np.zeros((8,), dtype=np.float32)
 
-    monkeypatch.setattr(audio_mod, "postprocess_spec", _capture_postprocess)
-    monkeypatch.setattr(audio_mod, "fit_length", lambda x, _n: np.asarray(x, dtype=np.float32))
-    monkeypatch.setattr(backend_mod, "build_runtime_model", lambda _onnx: _FakeRuntime())
-    monkeypatch.setattr(backend_mod, "infer_win_len", lambda _session, _sr: 4)
+    _use_fake_runner(monkeypatch, win_len=4, outputs=outputs)
+    _patch_offline_audio(monkeypatch, spec_r, _capture_postprocess)
 
     api.enhance(
         audio=np.zeros((8,), dtype=np.float32),
@@ -179,186 +134,45 @@ def test_enhance_applies_attn_limit_before_postprocess(monkeypatch) -> None:
     np.testing.assert_array_equal(captured["spec"], expected)
 
 
-def test_model_download_http_error_reports_status(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
+def test_enhance_feeds_each_frame_and_resets_reused_runner(monkeypatch) -> None:
+    from dpdfnet_native import api
 
-    def _raise_http(url: str, _destination: Path) -> None:
-        raise HTTPError(url=url, code=403, msg="Forbidden", hdrs=None, fp=None)
-
-    monkeypatch.setattr(models, "_download_one", _raise_http)
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-
-    with pytest.raises(RuntimeError, match=r"HTTP 403"):
-        models.resolve_model(
-            model=models.supported_models()[0],
-            auto_download=True,
-            verbose=False,
-        )
-
-
-def test_model_download_url_error_reports_network_issue(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-
-    def _raise_url(_url: str, _destination: Path) -> None:
-        raise URLError("unreachable")
-
-    monkeypatch.setattr(models, "_download_one", _raise_url)
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-
-    with pytest.raises(RuntimeError, match=r"Network error"):
-        models.resolve_model(
-            model=models.supported_models()[0],
-            auto_download=True,
-            verbose=False,
-        )
-
-
-def test_model_download_unwritable_dir_reports_path(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-
-    model_dir = tmp_path / "blocked"
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(model_dir))
-
-    def _raise_permission(*_args, **_kwargs):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(models.tempfile, "mkstemp", _raise_permission)
-
-    with pytest.raises(RuntimeError, match=r"not writable"):
-        models.resolve_model(
-            model=models.supported_models()[0],
-            auto_download=True,
-            verbose=False,
-        )
-
-
-def test_model_download_retries_transient_network_errors(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-
-    attempts = {"count": 0}
-
-    def _flaky_download(_url: str, destination: Path) -> None:
-        attempts["count"] += 1
-        if attempts["count"] <= 2:
-            raise URLError("[Errno 104] Connection reset by peer")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"ok")
-
-    monkeypatch.setattr(models, "_download_one", _flaky_download)
-    monkeypatch.setattr(models.time, "sleep", lambda _seconds: None)
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-
-    model_name = models.supported_models()[0]
-    info = models.MODEL_REGISTRY[model_name]
-    resolved = models.resolve_model(
-        model=model_name,
-        auto_download=True,
-        verbose=False,
+    spec_r = np.random.default_rng(3).normal(size=(1, 5, 3, 2)).astype(np.float32)
+    captured = []
+    _patch_offline_audio(
+        monkeypatch, spec_r, lambda spec, _cfg: captured.append(spec.copy()) or np.zeros(8, np.float32)
     )
+    runner = _FakeRunner(win_len=4, passthrough=True)
 
-    assert resolved.onnx_path == (tmp_path / info.onnx_filename).resolve()
-    assert resolved.onnx_path.is_file()
-    assert attempts["count"] >= 3
+    for _ in range(2):
+        api._enhance_with_runner(np.zeros(8, np.float32), 16000, runner=runner)
+
+    assert runner.resets == 2
+    assert runner.calls == 10
+    for spec in captured:
+        np.testing.assert_array_equal(spec, spec_r)
 
 
-def test_missing_model_message_does_not_reference_unsupported_cli_flags(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
+def test_enhance_passes_single_thread_to_the_runner(monkeypatch) -> None:
+    from dpdfnet_native import api
 
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-
-    with pytest.raises(FileNotFoundError) as exc_info:
-        models.resolve_model(
-            model=models.supported_models()[0],
-            auto_download=False,
-            verbose=False,
-        )
-
-    message = str(exc_info.value)
-    assert "--onnx" not in message
-    assert "onnx_path" in message
+    created = _use_fake_runner(monkeypatch, win_len=4)
+    _patch_offline_audio(monkeypatch, np.zeros((1, 2, 3, 2), dtype=np.float32))
+    api.enhance(np.zeros(8, np.float32), 16000, model="dpdfnet8_48khz_hr", single_thread=True)
+    assert created[0].model == "dpdfnet8_48khz_hr"
+    assert created[0].single_thread
 
 
 # ---------------------------------------------------------------------------
 # StreamEnhancer tests
 # ---------------------------------------------------------------------------
 
-class _SessionFrameRunner:
-    """Reference runner for signal-pipeline tests, without ONNX allocation APIs."""
-
-    def __init__(self, runtime, win_len):
-        self.runtime = runtime
-        self.spec = np.zeros((1, 1, win_len // 2 + 1, 2), dtype=np.float32)
-        self.reset()
-
-    def reset(self):
-        self.state = self.runtime.init_state.copy()
-
-    def run(self):
-        output, self.state = self.runtime.session.run(
-            [self.runtime.out_spec_name, self.runtime.out_state_name],
-            {
-                self.runtime.in_spec_name: self.spec,
-                self.runtime.in_state_name: self.state,
-            },
-        )
-        return output
-
-
 def _make_fake_stream_enhancer(monkeypatch, win_len: int = 8, model_sr: int = 16000):
-    """Return a StreamEnhancer backed by a fake zero-output ONNX session."""
-    from dpdfnet import stream as stream_mod
+    """Return a StreamEnhancer whose model outputs zeros."""
+    _use_fake_runner(monkeypatch, win_len=win_len, sample_rate=model_sr)
+    from dpdfnet_native import StreamEnhancer
 
-    freq_bins = win_len // 2 + 1
-
-    class _FakeSession:
-        def get_inputs(self):
-            class _Spec:
-                name = "spec"
-                shape = (1, 1, freq_bins, 2)
-
-            class _State:
-                name = "state"
-
-            return [_Spec(), _State()]
-
-        def get_outputs(self):
-            class _OutSpec:
-                name = "out_spec"
-
-            class _OutState:
-                name = "out_state"
-
-            return [_OutSpec(), _OutState()]
-
-        def run(self, _outputs, _inputs):
-            return (
-                np.zeros((1, 1, freq_bins, 2), dtype=np.float32),
-                np.zeros((1,), dtype=np.float32),
-            )
-
-    class _FakeRuntime:
-        session = _FakeSession()
-        init_state = np.zeros((1,), dtype=np.float32)
-        in_spec_name = "spec"
-        in_state_name = "state"
-        out_spec_name = "out_spec"
-        out_state_name = "out_state"
-
-    class _ResolvedInfo:
-        sample_rate = model_sr
-
-    class _ResolvedModel:
-        info = _ResolvedInfo()
-        onnx_path = Path("fake.onnx")
-
-    monkeypatch.setattr(stream_mod, "resolve_model", lambda **_kw: _ResolvedModel())
-    monkeypatch.setattr(stream_mod, "build_runtime_model", lambda _p: _FakeRuntime())
-    monkeypatch.setattr(stream_mod, "infer_win_len", lambda _s, _sr: win_len)
-    monkeypatch.setattr(stream_mod, "OnnxFrameRunner", _SessionFrameRunner)
-
-    from dpdfnet import StreamEnhancer
-
-    return StreamEnhancer(model="dpdfnet2")
+    return StreamEnhancer()
 
 
 def test_stream_enhancer_buffers_small_chunks(monkeypatch) -> None:
@@ -431,58 +245,16 @@ def test_stream_enhancer_flush_on_empty_buffer_returns_empty(monkeypatch) -> Non
 # ---------------------------------------------------------------------------
 
 def _make_passthrough_stream_enhancer(monkeypatch, win_len: int = 320, model_sr: int = 16000):
-    """StreamEnhancer backed by a passthrough ONNX session (returns input spectrum unchanged).
+    """StreamEnhancer whose model returns the input spectrum unchanged.
 
-    Unlike ``_make_fake_stream_enhancer`` which outputs zeros, this helper lets
-    the real causal STFT / overlap-add pipeline run, making it suitable for
+    Unlike ``_make_fake_stream_enhancer`` which outputs zeros, this lets the
+    real causal STFT / overlap-add pipeline run, making it suitable for
     testing signal reconstruction properties.
     """
-    from dpdfnet import stream as stream_mod
+    _use_fake_runner(monkeypatch, win_len=win_len, sample_rate=model_sr, passthrough=True)
+    from dpdfnet_native import StreamEnhancer
 
-    freq_bins = win_len // 2 + 1
-
-    class _PassthroughSession:
-        def get_inputs(self):
-            class _Spec:
-                name = "spec"
-                shape = (1, 1, freq_bins, 2)
-            class _State:
-                name = "state"
-            return [_Spec(), _State()]
-
-        def get_outputs(self):
-            class _OutSpec:
-                name = "out_spec"
-            class _OutState:
-                name = "out_state"
-            return [_OutSpec(), _OutState()]
-
-        def run(self, _outputs, inputs):
-            return inputs["spec"].copy(), inputs["state"].copy()
-
-    class _Runtime:
-        session = _PassthroughSession()
-        init_state = np.zeros((1,), dtype=np.float32)
-        in_spec_name = "spec"
-        in_state_name = "state"
-        out_spec_name = "out_spec"
-        out_state_name = "out_state"
-
-    class _Info:
-        sample_rate = model_sr
-
-    class _Resolved:
-        info = _Info()
-        onnx_path = Path("fake.onnx")
-
-    monkeypatch.setattr(stream_mod, "resolve_model", lambda **_kw: _Resolved())
-    monkeypatch.setattr(stream_mod, "build_runtime_model", lambda _p: _Runtime())
-    monkeypatch.setattr(stream_mod, "infer_win_len", lambda _s, _sr: win_len)
-    monkeypatch.setattr(stream_mod, "OnnxFrameRunner", _SessionFrameRunner)
-
-    from dpdfnet import StreamEnhancer
-
-    return StreamEnhancer(model="dpdfnet2")
+    return StreamEnhancer()
 
 
 def _stream_enhance(enhancer, signal: np.ndarray, block_size: int, sr: int = 16000):
@@ -554,42 +326,10 @@ def test_stream_and_offline_both_reconstruct_with_passthrough(monkeypatch) -> No
     WIN = 320
     HOP = WIN // 2
     MODEL_SR = 16000
-    freq_bins = WIN // 2 + 1
 
-    class _PassthroughSession:
-        def run(self, _outputs, inputs):
-            return inputs["spec"].copy(), inputs["state"].copy()
+    from dpdfnet_native import api
 
-    class _Runtime:
-        session = _PassthroughSession()
-        init_state = np.zeros((1,), dtype=np.float32)
-        in_spec_name = "spec"
-        in_state_name = "state"
-        out_spec_name = "out_spec"
-        out_state_name = "out_state"
-
-    class _Info:
-        sample_rate = MODEL_SR
-
-    class _Resolved:
-        info = _Info()
-        onnx_path = Path("fake.onnx")
-
-    # --- patch offline enhance() ---
-    from dpdfnet import api
-    import dpdfnet.onnx_backend as backend_mod
-
-    monkeypatch.setattr(api, "resolve_model", lambda **_kw: _Resolved())
-    monkeypatch.setattr(backend_mod, "build_runtime_model", lambda _p: _Runtime())
-    monkeypatch.setattr(backend_mod, "infer_win_len", lambda _s, _sr: WIN)
-
-    # --- patch streaming ---
-    from dpdfnet import stream as stream_mod
-
-    monkeypatch.setattr(stream_mod, "resolve_model", lambda **_kw: _Resolved())
-    monkeypatch.setattr(stream_mod, "build_runtime_model", lambda _p: _Runtime())
-    monkeypatch.setattr(stream_mod, "infer_win_len", lambda _s, _sr: WIN)
-    monkeypatch.setattr(stream_mod, "OnnxFrameRunner", _SessionFrameRunner)
+    _use_fake_runner(monkeypatch, win_len=WIN, sample_rate=MODEL_SR, passthrough=True)
 
     np.random.seed(99)
     signal = np.random.randn(8000).astype(np.float32) * 0.5
@@ -598,9 +338,9 @@ def test_stream_and_offline_both_reconstruct_with_passthrough(monkeypatch) -> No
     offline_out = api.enhance(audio=signal, sample_rate=MODEL_SR)
 
     # Streaming (single large chunk)
-    from dpdfnet import StreamEnhancer
+    from dpdfnet_native import StreamEnhancer
 
-    se = StreamEnhancer(model="dpdfnet2")
+    se = StreamEnhancer()
     stream_out = np.concatenate([
         se.process(signal, sample_rate=MODEL_SR),
         se.flush(),
@@ -664,7 +404,7 @@ def test_stream_enhancer_stereo_converted_to_mono(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_to_mono_passthrough_for_1d() -> None:
-    from dpdfnet.audio import to_mono
+    from dpdfnet_native.audio import to_mono
     x = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     result = to_mono(x)
     np.testing.assert_array_equal(result, x)
@@ -672,7 +412,7 @@ def test_to_mono_passthrough_for_1d() -> None:
 
 
 def test_to_mono_averages_stereo_channels() -> None:
-    from dpdfnet.audio import to_mono
+    from dpdfnet_native.audio import to_mono
     # shape (samples, channels) — axis-1 is channels, axis-0 is time
     left = np.array([1.0, 0.0], dtype=np.float32)
     right = np.array([0.0, 1.0], dtype=np.float32)
@@ -683,14 +423,14 @@ def test_to_mono_averages_stereo_channels() -> None:
 
 
 def test_to_mono_invalid_shape_raises() -> None:
-    from dpdfnet.audio import to_mono
+    from dpdfnet_native.audio import to_mono
     bad = np.zeros((2, 2, 2), dtype=np.float32)
     with pytest.raises(ValueError, match="Expected mono/stereo"):
         to_mono(bad)
 
 
 def test_fit_length_truncates() -> None:
-    from dpdfnet.audio import fit_length
+    from dpdfnet_native.audio import fit_length
     x = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
     result = fit_length(x, 2)
     assert len(result) == 2
@@ -698,7 +438,7 @@ def test_fit_length_truncates() -> None:
 
 
 def test_fit_length_pads_with_zeros() -> None:
-    from dpdfnet.audio import fit_length
+    from dpdfnet_native.audio import fit_length
     x = np.array([1.0, 2.0], dtype=np.float32)
     result = fit_length(x, 5)
     assert len(result) == 5
@@ -706,14 +446,14 @@ def test_fit_length_pads_with_zeros() -> None:
 
 
 def test_fit_length_exact_unchanged() -> None:
-    from dpdfnet.audio import fit_length
+    from dpdfnet_native.audio import fit_length
     x = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     result = fit_length(x, 3)
     np.testing.assert_array_equal(result, x)
 
 
 def test_pcm16_safe_clips_and_converts() -> None:
-    from dpdfnet.audio import pcm16_safe
+    from dpdfnet_native.audio import pcm16_safe
     x = np.array([-2.0, -1.0, 0.0, 1.0, 2.0], dtype=np.float32)
     result = pcm16_safe(x)
     assert result.dtype == np.int16
@@ -725,7 +465,7 @@ def test_pcm16_safe_clips_and_converts() -> None:
 
 
 def test_vorbis_window_dtype_and_length() -> None:
-    from dpdfnet.audio import vorbis_window
+    from dpdfnet_native.audio import vorbis_window
     win = vorbis_window(16)
     assert win.dtype == np.float32
     assert len(win) == 16
@@ -733,7 +473,7 @@ def test_vorbis_window_dtype_and_length() -> None:
 
 def test_vorbis_window_cola_at_50pct_overlap() -> None:
     """w[n]^2 + w[n + hop]^2 == 1 for all n in [0, hop)."""
-    from dpdfnet.audio import vorbis_window
+    from dpdfnet_native.audio import vorbis_window
     win_len = 32
     hop = win_len // 2
     w = vorbis_window(win_len).astype(np.float64)
@@ -742,7 +482,7 @@ def test_vorbis_window_cola_at_50pct_overlap() -> None:
 
 
 def test_make_stft_config_hop_is_half_win() -> None:
-    from dpdfnet.audio import make_stft_config
+    from dpdfnet_native.audio import make_stft_config
     cfg = make_stft_config(64)
     assert cfg.hop_size == 32
     assert cfg.win_len == 64
@@ -750,7 +490,7 @@ def test_make_stft_config_hop_is_half_win() -> None:
 
 
 def test_ensure_sample_rate_identity_when_same_sr() -> None:
-    from dpdfnet.audio import ensure_sample_rate
+    from dpdfnet_native.audio import ensure_sample_rate
     x = np.array([0.1, 0.2, 0.3], dtype=np.float32)
     result = ensure_sample_rate(x, 16000, 16000)
     np.testing.assert_array_equal(result, x)
@@ -758,7 +498,7 @@ def test_ensure_sample_rate_identity_when_same_sr() -> None:
 
 
 def test_apply_attn_limit_none_returns_enhanced() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.ones((1, 4, 2, 2), dtype=np.float32)
     spec_enh = np.full((1, 4, 2, 2), 3.0, dtype=np.float32)
@@ -770,7 +510,7 @@ def test_apply_attn_limit_none_returns_enhanced() -> None:
 
 
 def test_apply_attn_limit_zero_db_returns_shifted_noisy_reference() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.arange(1, 1 + (1 * 7 * 1 * 2), dtype=np.float32).reshape(1, 7, 1, 2)
     spec_enh = np.full_like(spec_noisy, 99.0)
@@ -783,7 +523,7 @@ def test_apply_attn_limit_zero_db_returns_shifted_noisy_reference() -> None:
 
 
 def test_apply_attn_limit_finite_db_blends_shifted_noisy_and_enhanced() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.arange(1, 1 + (1 * 7 * 1 * 2), dtype=np.float32).reshape(1, 7, 1, 2)
     spec_enh = np.full_like(spec_noisy, 8.0)
@@ -799,7 +539,7 @@ def test_apply_attn_limit_finite_db_blends_shifted_noisy_and_enhanced() -> None:
 
 
 def test_apply_attn_limit_inf_returns_enhanced() -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec_noisy = np.ones((1, 4, 2, 2), dtype=np.float32)
     spec_enh = np.full((1, 4, 2, 2), 7.0, dtype=np.float32)
@@ -811,7 +551,7 @@ def test_apply_attn_limit_inf_returns_enhanced() -> None:
 
 @pytest.mark.parametrize("attn_limit_db", [-1.0, np.nan])
 def test_apply_attn_limit_invalid_values_raise(attn_limit_db: float) -> None:
-    from dpdfnet.audio import apply_attn_limit
+    from dpdfnet_native.audio import apply_attn_limit
 
     spec = np.zeros((1, 4, 2, 2), dtype=np.float32)
 
@@ -824,72 +564,56 @@ def test_apply_attn_limit_invalid_values_raise(attn_limit_db: float) -> None:
 # ---------------------------------------------------------------------------
 
 def test_get_model_info_invalid_raises() -> None:
-    from dpdfnet.models import get_model_info
+    from dpdfnet_native.models import get_model_info
     with pytest.raises(ValueError, match="Unsupported model"):
         get_model_info("nonexistent_model_xyz")
 
 
-def test_8khz_models_are_registered() -> None:
-    from dpdfnet import models
+def test_registry_holds_the_two_native_models() -> None:
+    from dpdfnet_native import models
 
-    expected = {
-        "dpdfnet2_8khz": "dpdfnet2_8khz.onnx",
-        "dpdfnet8_8khz": "dpdfnet8_8khz.onnx",
-    }
-    for model_name, onnx_filename in expected.items():
-        info = models.get_model_info(model_name)
-        assert info.sample_rate == 8000
-        assert info.frame_ms == 20.0
-        assert info.onnx_filename == onnx_filename
-        assert model_name in models.supported_models()
+    assert models.supported_models() == ["dpdfnet2_48khz_hr", "dpdfnet8_48khz_hr"]
+    assert models.DEFAULT_MODEL in models.MODEL_REGISTRY
+    for name in models.supported_models():
+        info = models.get_model_info(name)
+        assert info.sample_rate == 48000
+        assert info.native_id == int(name[7])
 
 
-def test_available_model_entries_keys(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
+def test_available_model_entries_keys() -> None:
+    from dpdfnet_native import models
+
     entries = models.available_model_entries()
-    assert len(entries) == len(models.MODEL_REGISTRY)
+    assert [entry["name"] for entry in entries] == models.supported_models()
     for entry in entries:
-        for key in ("name", "sample_rate", "onnx_found", "ready", "cached", "onnx_path"):
+        for key in ("name", "sample_rate", "description", "weights_path", "ready"):
             assert key in entry, f"Missing key '{key}' in entry {entry}"
 
 
-def test_available_model_entries_onnx_found_when_file_present(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-    first_name = models.supported_models()[0]
-    info = models.MODEL_REGISTRY[first_name]
-    # Write a non-empty stub file
-    (tmp_path / info.onnx_filename).write_bytes(b"stub")
-    entries = {e["name"]: e for e in models.available_model_entries()}
-    assert entries[first_name]["onnx_found"] is True
-    assert entries[first_name]["ready"] is True
+def test_weights_are_found_in_the_source_tree() -> None:
+    from dpdfnet_native import models
+
+    for name in models.supported_models():
+        assert models.weights_path(name).name in {f"{name}.f32", "weights.f32"}
 
 
-def test_available_model_entries_onnx_found_false_when_absent(tmp_path, monkeypatch) -> None:
-    from dpdfnet import models
-    monkeypatch.setenv("DPDFNET_MODEL_DIR", str(tmp_path))
-    first_name = models.supported_models()[0]
-    entries = {e["name"]: e for e in models.available_model_entries()}
-    assert entries[first_name]["onnx_found"] is False
+def test_missing_library_override_names_the_variable(tmp_path, monkeypatch) -> None:
+    from dpdfnet_native import models
+
+    monkeypatch.setenv("DPDFNET_NATIVE_LIBRARY", str(tmp_path / "missing.so"))
+    assert models.find_native_library() is None
+    assert models.available_model_entries()[0]["ready"] is False
+    with pytest.raises(FileNotFoundError, match="DPDFNET_NATIVE_LIBRARY"):
+        models.native_library_path()
 
 
-def test_hf_url_env_var_overrides(monkeypatch) -> None:
-    from dpdfnet.models import _hf_url
-    monkeypatch.setenv("DPDFNET_HF_REPO", "my-org/my-repo")
-    monkeypatch.setenv("DPDFNET_HF_BASE_URL", "https://example.com")
-    monkeypatch.setenv("DPDFNET_HF_SUBDIR", "weights")
-    url = _hf_url("model.onnx", "v1")
-    assert "my-org/my-repo" in url
-    assert "example.com" in url
-    assert "weights/model.onnx" in url
-    assert "v1" in url
+def test_library_override_is_used(tmp_path, monkeypatch) -> None:
+    from dpdfnet_native import models
 
-
-def test_download_quiet_and_verbose_raises() -> None:
-    import dpdfnet
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        dpdfnet.download(quiet=True, verbose=True)
+    library = tmp_path / "libcustom.so"
+    library.write_bytes(b"stub")
+    monkeypatch.setenv("DPDFNET_NATIVE_LIBRARY", str(library))
+    assert models.native_library_path() == library.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +621,7 @@ def test_download_quiet_and_verbose_raises() -> None:
 # ---------------------------------------------------------------------------
 
 def test_enhance_file_missing_input_raises(tmp_path) -> None:
-    from dpdfnet.api import enhance_file
+    from dpdfnet_native.api import enhance_file
     with pytest.raises(FileNotFoundError, match="Input file not found"):
         enhance_file(tmp_path / "nonexistent.wav", tmp_path / "out.wav")
 
@@ -905,7 +629,7 @@ def test_enhance_file_missing_input_raises(tmp_path) -> None:
 def test_enhance_file_default_output_path(tmp_path, monkeypatch) -> None:
     """When output_path is None, the output file is <stem>_enhanced.wav next to input."""
     import soundfile as sf
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     # Write a minimal valid WAV
     in_path = tmp_path / "speech.wav"
@@ -922,7 +646,7 @@ def test_enhance_file_default_output_path(tmp_path, monkeypatch) -> None:
 def test_enhance_file_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     """enhance_file() forwards attn_limit_db to enhance()."""
     import soundfile as sf
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     in_path = tmp_path / "speech.wav"
     out_path = tmp_path / "speech_out.wav"
@@ -942,10 +666,10 @@ def test_enhance_file_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     assert captured["attn_limit_db"] == 12.0
 
 
-def test__enhance_file_with_runtime_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
-    """_enhance_file_with_runtime() forwards attn_limit_db to _enhance_with_runtime()."""
+def test__enhance_file_with_runner_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
+    """_enhance_file_with_runner() forwards attn_limit_db to _enhance_with_runner()."""
     import soundfile as sf
-    from dpdfnet import api
+    from dpdfnet_native import api
 
     in_path = tmp_path / "speech.wav"
     out_path = tmp_path / "speech_out.wav"
@@ -953,17 +677,16 @@ def test__enhance_file_with_runtime_forwards_attn_limit_db(tmp_path, monkeypatch
 
     captured: dict[str, float] = {}
 
-    def _fake_enhance_with_runtime(audio, sample_rate, **kwargs):
+    def _fake_enhance_with_runner(audio, sample_rate, **kwargs):
         captured["attn_limit_db"] = kwargs["attn_limit_db"]
         return np.zeros_like(np.asarray(audio, dtype=np.float32))
 
-    monkeypatch.setattr(api, "_enhance_with_runtime", _fake_enhance_with_runtime)
+    monkeypatch.setattr(api, "_enhance_with_runner", _fake_enhance_with_runner)
 
-    result = api._enhance_file_with_runtime(
+    result = api._enhance_file_with_runner(
         input_path=in_path,
         output_path=out_path,
-        runtime=object(),
-        model_sample_rate=16000,
+        runner=object(),
         attn_limit_db=9.0,
     )
 
@@ -972,7 +695,7 @@ def test__enhance_file_with_runtime_forwards_attn_limit_db(tmp_path, monkeypatch
 
 
 def test_read_audio_unsupported_extension_raises(tmp_path) -> None:
-    from dpdfnet.api import _read_audio
+    from dpdfnet_native.api import _read_audio
     bad = tmp_path / "clip.xyz"
     bad.write_bytes(b"data")
     with pytest.raises(ValueError, match="Unsupported audio format"):
@@ -982,7 +705,7 @@ def test_read_audio_unsupported_extension_raises(tmp_path) -> None:
 def test_read_audio_pydub_missing_import_error(tmp_path, monkeypatch) -> None:
     """Reading an .mp3 file without pydub installed raises a helpful ImportError."""
     import builtins
-    from dpdfnet.api import _read_audio
+    from dpdfnet_native.api import _read_audio
 
     mp3 = tmp_path / "clip.mp3"
     mp3.write_bytes(b"fake-mp3")
@@ -1004,13 +727,13 @@ def test_read_audio_pydub_missing_import_error(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 def test_cli_no_command_returns_0(capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
     exit_code = cli.main([])
     assert exit_code == 0
 
 
 def test_cli_models_command_lists_all_models(capsys) -> None:
-    from dpdfnet import cli, models
+    from dpdfnet_native import cli, models
     exit_code = cli.main(["models"])
     assert exit_code == 0
     output = capsys.readouterr().out
@@ -1019,13 +742,13 @@ def test_cli_models_command_lists_all_models(capsys) -> None:
 
 
 def test_cli_enhance_dir_nonexistent_input_returns_error(tmp_path, capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
     exit_code = cli.main(["enhance-dir", str(tmp_path / "nope"), str(tmp_path / "out")])
     assert exit_code == 2
 
 
 def test_cli_enhance_dir_empty_dir_returns_error(tmp_path, capsys) -> None:
-    from dpdfnet import cli
+    from dpdfnet_native import cli
     in_dir = tmp_path / "empty"
     in_dir.mkdir()
     exit_code = cli.main(["enhance-dir", str(in_dir), str(tmp_path / "out")])
@@ -1035,7 +758,7 @@ def test_cli_enhance_dir_empty_dir_returns_error(tmp_path, capsys) -> None:
 def test_cli_enhance_single_file(tmp_path, monkeypatch, capsys) -> None:
     """CLI enhance command calls enhance_file and reports the output path."""
     import soundfile as sf
-    from dpdfnet import cli, api
+    from dpdfnet_native import cli, api
 
     in_path = tmp_path / "input.wav"
     out_path = tmp_path / "output.wav"
@@ -1043,7 +766,7 @@ def test_cli_enhance_single_file(tmp_path, monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(api, "enhance_file", lambda *_a, **_kw: out_path)
     # Also patch _run_enhance's import of enhance_file
-    import dpdfnet.cli as cli_mod
+    import dpdfnet_native.cli as cli_mod
     monkeypatch.setattr(cli_mod, "_run_enhance",
                         lambda _args: (print(f"Wrote enhanced audio: {out_path}") or 0))
 
@@ -1055,7 +778,7 @@ def test_cli_enhance_single_file(tmp_path, monkeypatch, capsys) -> None:
 
 def test_cli_enhance_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     import soundfile as sf
-    from dpdfnet import api, cli
+    from dpdfnet_native import api, cli
 
     in_path = tmp_path / "input.wav"
     out_path = tmp_path / "output.wav"
@@ -1080,32 +803,22 @@ def test_cli_enhance_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
 
 def test_cli_enhance_dir_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
     import soundfile as sf
-    from dpdfnet import api, cli
-    import dpdfnet.models as models
-    import dpdfnet.onnx_backend as onnx_backend
+    from dpdfnet_native import api, cli
 
     in_dir = tmp_path / "in"
     out_dir = tmp_path / "out"
     in_dir.mkdir()
     sf.write(str(in_dir / "input.wav"), np.zeros(160, dtype=np.float32), 16000)
 
-    class _Info:
-        sample_rate = 16000
-
-    class _Resolved:
-        info = _Info()
-        onnx_path = Path("fake.onnx")
-
     captured: dict[str, float] = {}
 
-    def _fake_enhance_file_with_runtime(*_args, **kwargs):
+    def _fake_enhance_file_with_runner(*_args, **kwargs):
         captured["attn_limit_db"] = kwargs["attn_limit_db"]
         return Path(kwargs["output_path"])
 
     monkeypatch.setattr(cli, "print_banner", lambda **_kwargs: None)
-    monkeypatch.setattr(models, "resolve_model", lambda **_kwargs: _Resolved())
-    monkeypatch.setattr(onnx_backend, "build_runtime_model", lambda _path: object())
-    monkeypatch.setattr(api, "_enhance_file_with_runtime", _fake_enhance_file_with_runtime)
+    _use_fake_runner(monkeypatch)
+    monkeypatch.setattr(api, "_enhance_file_with_runner", _fake_enhance_file_with_runner)
 
     exit_code = cli.main(
         ["enhance-dir", str(in_dir), str(out_dir), "--attn-limit-db", "9"]
@@ -1113,3 +826,50 @@ def test_cli_enhance_dir_forwards_attn_limit_db(tmp_path, monkeypatch) -> None:
 
     assert exit_code == 0
     assert captured["attn_limit_db"] == 9.0
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_cli_enhance_dir_threads_runners_by_worker_count(tmp_path, monkeypatch, workers) -> None:
+    """One runner per worker thread, single-threaded when files run in parallel."""
+    import soundfile as sf
+    from dpdfnet_native import cli
+
+    in_dir = tmp_path / "in"
+    in_dir.mkdir()
+    for index in range(4):
+        sf.write(str(in_dir / f"clip{index}.wav"), np.zeros(320, dtype=np.float32), 16000)
+
+    monkeypatch.setattr(cli, "print_banner", lambda **_kwargs: None)
+    created = _use_fake_runner(monkeypatch, win_len=8, passthrough=True)
+
+    exit_code = cli.main(
+        ["enhance-dir", str(in_dir), str(tmp_path / "out"), "--workers", str(workers),
+         "--model", "dpdfnet8_48khz_hr"]
+    )
+
+    assert exit_code == 0
+    assert len(list((tmp_path / "out").glob("*_enhanced.wav"))) == 4
+    assert 1 <= len(created) <= workers
+    assert all(runner.single_thread == (workers > 1) for runner in created)
+    assert all(runner.model == "dpdfnet8_48khz_hr" for runner in created)
+    assert all(runner.closed for runner in created)
+    assert sum(runner.resets for runner in created) == 4
+
+
+def test_cli_has_no_download_command(capsys) -> None:
+    from dpdfnet_native import cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["download"])
+    assert exc_info.value.code == 2
+
+
+def test_removed_backend_options_are_rejected() -> None:
+    from dpdfnet_native import StreamEnhancer, enhance
+
+    with pytest.raises(TypeError):
+        StreamEnhancer(backend="onnx")
+    with pytest.raises(TypeError):
+        StreamEnhancer("dpdfnet2_48khz_hr", "model.onnx")
+    with pytest.raises(TypeError):
+        enhance(np.zeros(8, np.float32), 48000, onnx_path="model.onnx")
