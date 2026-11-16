@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dpdfnet-native"
-version = "1.0.0"
+version = "0.1.0"
 description = "Native x86-64 CPU inference for DPDFNet 48 kHz speech enhancement (a fork of Ceva-IP/DPDFNet)."
 readme = "README.md"
 requires-python = ">=3.11"

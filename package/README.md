@@ -16,12 +16,14 @@ is downloaded and no ONNX Runtime is needed.
 
 ## Installation
 
+Download the wheel for your platform from
+[GitHub Releases](https://github.com/perennialtech/DPDFNet/releases), then install it.
+
 ```bash
-pip install dpdfnet-native
+python -m pip install /path/to/downloaded.whl
 ```
 
-It is released as wheels only, for Linux (glibc 2.27+) and Windows on
-x86-64, Python 3.11 and later; elsewhere pip finds no matching distribution.
+Wheels support Linux (glibc 2.27+) and Windows on x86-64 with Python 3.11 or later.
 To build a wheel from a repository checkout, with GCC and CMake 3.18+ (MSYS2
 UCRT64 GCC on Windows):
 
