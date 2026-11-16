@@ -78,9 +78,10 @@ ONNX Runtime.
 ## Install the Package
 
 Wheels for Linux (glibc 2.27+) and Windows x86-64 bundle the library and
-both models' weights, so nothing is downloaded at run time. The repository's
-`Package` workflow builds and tests them; releases are wheels only. Once
-published, install it with `pip install dpdfnet-native`. To build a wheel from a checkout, with
+both models' weights for offline use. Download the wheel for your platform
+from [GitHub Releases](https://github.com/perennialtech/DPDFNet/releases) and
+install it with `python -m pip install /path/to/downloaded.whl`. The repository's
+`Package` workflow builds and tests the wheels. To build from a checkout, use
 GCC 12+ and CMake 3.18+ (MSYS2 UCRT64 GCC on Windows, see
 [BUILD.md](optimized_inference/docs/BUILD.md)):
 
